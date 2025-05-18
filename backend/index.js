@@ -23,8 +23,24 @@ const factory = new ethers.Contract(
 function listenToMarket(marketAddress) {
   const market = new ethers.Contract(marketAddress, marketAbi, provider);
   market.on('Trade', async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
-    const { transactionHash, blockNumber } = event;
+    // Use event.log for ethers v6
+    const { transactionHash, blockNumber } = event.log;
+    const marketAddress = event.address;
     const timestamp = new Date(); // For demo; ideally fetch block timestamp
+
+    // Debug log
+    console.log('Trade event:', {
+      transactionHash,
+      blockNumber,
+      user,
+      marketAddress,
+      outcome,
+      amount,
+      shares,
+      creatorFee,
+      platformFee,
+      timestamp
+    });
 
     await db.query(
       `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp)
@@ -56,10 +72,11 @@ factory.on('MarketCreated', (marketAddress, creator, predictionId, event) => {
 
 // --- 2. On startup, listen to all existing markets ---
 async function listenToExistingMarkets() {
- const marketAddresses = await factory.getMarkets();
-for (const marketAddress of marketAddresses) {
-  listenToMarket(marketAddress);
-}
+  const count = await factory.marketCount();
+  for (let i = 0; i < count; i++) {
+    const marketAddress = await factory.markets(i);
+    listenToMarket(marketAddress);
+  }
 }
 listenToExistingMarkets();
 
