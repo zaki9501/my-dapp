@@ -11,7 +11,7 @@ const db = new Pool({ connectionString: process.env.DATABASE_URL });
 const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 const contract = new ethers.Contract(
   process.env.CONTRACT_ADDRESS,
-  JSON.parse(process.env.CONTRACT_FACTORY_ABI),
+  JSON.parse(process.env.CONTRACT_MARKET_ABI),
   provider
 );
 
