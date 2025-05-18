@@ -72,11 +72,10 @@ factory.on('MarketCreated', (marketAddress, creator, predictionId, event) => {
 
 // --- 2. On startup, listen to all existing markets ---
 async function listenToExistingMarkets() {
-  const count = await factory.marketCount();
-  for (let i = 0; i < count; i++) {
-    const marketAddress = await factory.markets(i);
-    listenToMarket(marketAddress);
-  }
+  const marketAddresses = await factory.getMarkets();
+for (const marketAddress of marketAddresses) {
+  listenToMarket(marketAddress);
+}
 }
 listenToExistingMarkets();
 
