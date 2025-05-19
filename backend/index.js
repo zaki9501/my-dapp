@@ -127,9 +127,9 @@ app.get('/api/market-trades/:marketAddress', async (req, res) => {
   const { marketAddress } = req.params;
   try {
     const { rows } = await db.query(
-      'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
-      [marketAddress.toLowerCase()]
-    );
+  'SELECT * FROM trades WHERE LOWER(market_address) = LOWER($1) ORDER BY timestamp ASC',
+  [marketAddress]
+);
     // Format values for display (MON)
     const formatted = rows.map(row => ({
       ...row,
