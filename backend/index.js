@@ -122,6 +122,29 @@ app.get('/api/user-trades/:address', async (req, res) => {
   }
 });
 
+// --- API Endpoint: Get all trades for a market ---
+app.get('/api/market-trades/:marketAddress', async (req, res) => {
+  const { marketAddress } = req.params;
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
+      [marketAddress.toLowerCase()]
+    );
+    // Format values for display (MON)
+    const formatted = rows.map(row => ({
+      ...row,
+      amount_mon: ethers.formatEther(row.amount),
+      shares_mon: ethers.formatEther(row.shares),
+      creator_fee_mon: ethers.formatEther(row.creator_fee),
+      platform_fee_mon: ethers.formatEther(row.platform_fee),
+    }));
+    res.json(formatted);
+  } catch (err) {
+    console.error('API error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(process.env.PORT || 3001, () => {
   console.log('API running on port', process.env.PORT || 3001);
 }); 
