@@ -103,10 +103,10 @@ listenToExistingMarkets();
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
-    const { rows } = await db.query(
-      'SELECT * FROM trades WHERE user_address = $1 ORDER BY timestamp DESC LIMIT 100',
-      [address.toLowerCase()]
-    );
+ const { rows } = await db.query(
+  'SELECT * FROM trades WHERE LOWER(market_address) = LOWER($1) ORDER BY timestamp ASC',
+  [marketAddress]
+);
     // Format values for display (MON)
     const formatted = rows.map(row => ({
       ...row,
