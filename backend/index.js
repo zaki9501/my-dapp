@@ -129,7 +129,7 @@ async function indexMarketMetadata(marketAddress) {
       market.status(),
       market.resolutionDate(),
       market.resolved(),
-      market.outcome().catch(() => null),
+      market.outcome.catch(() => null),
       market.yesPool(),
       market.noPool(),
       market.volume(),
