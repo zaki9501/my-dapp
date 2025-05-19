@@ -47,7 +47,7 @@ function listenToMarket(marketAddress) {
       }
       try {
         // resolved outcome: 0 or 1 if resolved, null/undefined if not
-        resolvedOutcome = await market.outcome();
+        resolvedOutcome = await market.winningOutcome();
       } catch (e) {
         // Not resolved yet
         resolvedOutcome = null;
@@ -115,7 +115,7 @@ async function indexMarketMetadata(marketAddress) {
       status,
       resolutionDate,
       resolved,
-      outcome,
+      winningOutcome,
       yesPool,
       noPool,
       volume,
@@ -129,7 +129,7 @@ async function indexMarketMetadata(marketAddress) {
       market.status(),
       market.resolutionDate(),
       market.resolved(),
-      market.outcome.catch(() => null),
+      market.winningOutcome().catch(() => null),
       market.yesPool(),
       market.noPool(),
       market.volume(),
@@ -163,7 +163,7 @@ async function indexMarketMetadata(marketAddress) {
         status,
         Number(resolutionDate),
         resolved,
-        outcome,
+        winningOutcome,
         ethers.formatEther(yesPool),
         ethers.formatEther(noPool),
         ethers.formatEther(volume),
