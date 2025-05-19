@@ -91,24 +91,104 @@ function listenToMarket(marketAddress) {
         ]
       );
       console.log('Trade indexed:', transactionHash, 'on market', marketAddress, 'userFid:', userFid, 'predictionId:', predictionId, 'resolvedOutcome:', resolvedOutcome);
+      await indexMarketMetadata(marketAddress);
     } catch (err) {
       console.error('Error handling Trade event:', err);
     }
   });
-  console.log('Listening for trades on market:', marketAddress);
+  market.on('MarketResolved', async () => {
+    await indexMarketMetadata(marketAddress);
+  });
+  console.log('Listening for trades and resolution on market:', marketAddress);
 }
 
-// --- 1. Listen for new markets created ---
-factory.on('MarketCreated', (marketAddress, creator, predictionId, event) => {
+// --- Helper: Listen to Market events and update markets table ---
+async function indexMarketMetadata(marketAddress) {
+  const market = new ethers.Contract(marketAddress, marketAbi, provider);
+  try {
+    const [
+      predictionId,
+      question,
+      description,
+      category,
+      rule,
+      status,
+      resolutionDate,
+      resolved,
+      outcome,
+      yesPool,
+      noPool,
+      volume,
+      tradesCount
+    ] = await Promise.all([
+      market.predictionId(),
+      market.question(),
+      market.description(),
+      market.category(),
+      market.rule(),
+      market.status(),
+      market.resolutionDate(),
+      market.resolved(),
+      market.outcome().catch(() => null),
+      market.yesPool(),
+      market.noPool(),
+      market.volume(),
+      market.tradesCount()
+    ]);
+    await db.query(
+      `INSERT INTO markets (
+        market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14)
+      ON CONFLICT (market_address) DO UPDATE SET
+        prediction_id = EXCLUDED.prediction_id,
+        question = EXCLUDED.question,
+        description = EXCLUDED.description,
+        category = EXCLUDED.category,
+        rule = EXCLUDED.rule,
+        status = EXCLUDED.status,
+        resolution_date = EXCLUDED.resolution_date,
+        resolved = EXCLUDED.resolved,
+        outcome = EXCLUDED.outcome,
+        yes_pool = EXCLUDED.yes_pool,
+        no_pool = EXCLUDED.no_pool,
+        volume = EXCLUDED.volume,
+        trades_count = EXCLUDED.trades_count`,
+      [
+        marketAddress,
+        predictionId,
+        question,
+        description,
+        category,
+        rule,
+        status,
+        Number(resolutionDate),
+        resolved,
+        outcome,
+        ethers.formatEther(yesPool),
+        ethers.formatEther(noPool),
+        ethers.formatEther(volume),
+        Number(tradesCount)
+      ]
+    );
+    console.log('Indexed/updated market metadata for', marketAddress);
+  } catch (err) {
+    console.error('Error indexing market metadata:', err);
+  }
+}
+
+// --- Listen to MarketCreated and update markets table ---
+factory.on('MarketCreated', async (marketAddress, creator, predictionId, event) => {
   console.log('New market created at:', marketAddress);
+  await indexMarketMetadata(marketAddress);
   listenToMarket(marketAddress);
 });
 
-// --- 2. On startup, listen to all existing markets ---
+// --- Listen to all existing markets on startup ---
 async function listenToExistingMarkets() {
   try {
     const marketAddresses = await factory.getMarkets();
     for (const marketAddress of marketAddresses) {
+      await indexMarketMetadata(marketAddress);
       listenToMarket(marketAddress);
     }
   } catch (err) {
@@ -116,6 +196,42 @@ async function listenToExistingMarkets() {
   }
 }
 listenToExistingMarkets();
+
+// --- API Endpoint: Get all trades for a market ---
+app.get('/api/market-trades/:marketAddress', async (req, res) => {
+  const { marketAddress } = req.params;
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
+      [marketAddress.toLowerCase()]
+    );
+    // Format values for display (MON)
+    const formatted = rows.map(row => ({
+      ...row,
+      amount_mon: ethers.formatEther(row.amount),
+      shares_mon: ethers.formatEther(row.shares),
+      creator_fee_mon: ethers.formatEther(row.creator_fee),
+      platform_fee_mon: ethers.formatEther(row.platform_fee),
+    }));
+    res.json(formatted);
+  } catch (err) {
+    console.error('API error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- API Endpoint: Get live markets from DB ---
+app.get('/api/live-markets', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      "SELECT * FROM markets WHERE status = 'live' AND resolved = false ORDER BY resolution_date ASC LIMIT 100"
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('API error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // --- API Endpoint ---
 app.get('/api/user-trades/:address', async (req, res) => {
@@ -134,29 +250,6 @@ app.get('/api/user-trades/:address', async (req, res) => {
       platform_fee_mon: ethers.formatEther(row.platform_fee),
       prediction_id: row.prediction_id,
       resolved_outcome: row.resolved_outcome
-    }));
-    res.json(formatted);
-  } catch (err) {
-    console.error('API error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// --- API Endpoint: Get all trades for a market ---
-app.get('/api/market-trades/:marketAddress', async (req, res) => {
-  const { marketAddress } = req.params;
-  try {
-    const { rows } = await db.query(
-      'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
-      [marketAddress.toLowerCase()]
-    );
-    // Format values for display (MON)
-    const formatted = rows.map(row => ({
-      ...row,
-      amount_mon: ethers.formatEther(row.amount),
-      shares_mon: ethers.formatEther(row.shares),
-      creator_fee_mon: ethers.formatEther(row.creator_fee),
-      platform_fee_mon: ethers.formatEther(row.platform_fee),
     }));
     res.json(formatted);
   } catch (err) {
