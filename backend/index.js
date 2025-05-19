@@ -24,9 +24,7 @@ function listenToMarket(marketAddress) {
   const market = new ethers.Contract(marketAddress, marketAbi, provider);
   market.on('Trade', async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
     try {
-      // ethers v6: event.log.address, event.log.transactionHash, event.log.blockNumber
       const { transactionHash, blockNumber, address: marketAddress } = event.log;
-      // Get block timestamp
       const block = await provider.getBlock(blockNumber);
       const timestamp = new Date(block.timestamp * 1000);
 
@@ -37,6 +35,22 @@ function listenToMarket(marketAddress) {
         if (userFid) userFid = userFid.toString();
       } catch (e) {
         console.warn('Could not fetch userFid for', user, e);
+      }
+
+      // Fetch predictionId and resolved outcome from the contract
+      let predictionId = null;
+      let resolvedOutcome = null;
+      try {
+        predictionId = await market.predictionId();
+      } catch (e) {
+        console.warn('Could not fetch predictionId for', marketAddress, e);
+      }
+      try {
+        // resolved outcome: 0 or 1 if resolved, null/undefined if not
+        resolvedOutcome = await market.outcome();
+      } catch (e) {
+        // Not resolved yet
+        resolvedOutcome = null;
       }
 
       // Debug log
@@ -51,12 +65,14 @@ function listenToMarket(marketAddress) {
         creatorFee,
         platformFee,
         timestamp,
-        userFid
+        userFid,
+        predictionId,
+        resolvedOutcome
       });
 
       await db.query(
-        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid, prediction_id, resolved_outcome)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT (tx_hash) DO NOTHING`,
         [
           transactionHash,
@@ -69,10 +85,12 @@ function listenToMarket(marketAddress) {
           creatorFee.toString(),
           platformFee.toString(),
           timestamp,
-          userFid
+          userFid,
+          predictionId,
+          resolvedOutcome
         ]
       );
-      console.log('Trade indexed:', transactionHash, 'on market', marketAddress, 'userFid:', userFid);
+      console.log('Trade indexed:', transactionHash, 'on market', marketAddress, 'userFid:', userFid, 'predictionId:', predictionId, 'resolvedOutcome:', resolvedOutcome);
     } catch (err) {
       console.error('Error handling Trade event:', err);
     }
@@ -103,10 +121,10 @@ listenToExistingMarkets();
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
- const { rows } = await db.query(
-  'SELECT * FROM trades WHERE LOWER(market_address) = LOWER($1) ORDER BY timestamp ASC',
-  [marketAddress]
-);
+    const { rows } = await db.query(
+      'SELECT * FROM trades WHERE user_address = $1 ORDER BY timestamp DESC LIMIT 100',
+      [address.toLowerCase()]
+    );
     // Format values for display (MON)
     const formatted = rows.map(row => ({
       ...row,
@@ -114,6 +132,8 @@ app.get('/api/user-trades/:address', async (req, res) => {
       shares_mon: ethers.formatEther(row.shares),
       creator_fee_mon: ethers.formatEther(row.creator_fee),
       platform_fee_mon: ethers.formatEther(row.platform_fee),
+      prediction_id: row.prediction_id,
+      resolved_outcome: row.resolved_outcome
     }));
     res.json(formatted);
   } catch (err) {
@@ -127,9 +147,9 @@ app.get('/api/market-trades/:marketAddress', async (req, res) => {
   const { marketAddress } = req.params;
   try {
     const { rows } = await db.query(
-  'SELECT * FROM trades WHERE LOWER(market_address) = LOWER($1) ORDER BY timestamp ASC',
-  [marketAddress]
-);
+      'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
+      [marketAddress.toLowerCase()]
+    );
     // Format values for display (MON)
     const formatted = rows.map(row => ({
       ...row,
