@@ -23,44 +23,48 @@ const factory = new ethers.Contract(
 function listenToMarket(marketAddress) {
   const market = new ethers.Contract(marketAddress, marketAbi, provider);
   market.on('Trade', async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
-    // ethers v6: event.log.address, event.log.transactionHash, event.log.blockNumber
-    const { transactionHash, blockNumber, address: marketAddress } = event.log;
-    // Get block timestamp
-    const block = await provider.getBlock(blockNumber);
-    const timestamp = new Date(block.timestamp * 1000);
+    try {
+      // ethers v6: event.log.address, event.log.transactionHash, event.log.blockNumber
+      const { transactionHash, blockNumber, address: marketAddress } = event.log;
+      // Get block timestamp
+      const block = await provider.getBlock(blockNumber);
+      const timestamp = new Date(block.timestamp * 1000);
 
-    // Debug log
-    console.log('Trade event:', {
-      transactionHash,
-      blockNumber,
-      user,
-      marketAddress,
-      outcome,
-      amount,
-      shares,
-      creatorFee,
-      platformFee,
-      timestamp
-    });
-
-    await db.query(
-      `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (tx_hash) DO NOTHING`,
-      [
+      // Debug log
+      console.log('Trade event:', {
         transactionHash,
         blockNumber,
         user,
         marketAddress,
         outcome,
-        amount.toString(),
-        shares.toString(),
-        creatorFee.toString(),
-        platformFee.toString(),
+        amount,
+        shares,
+        creatorFee,
+        platformFee,
         timestamp
-      ]
-    );
-    console.log('Trade indexed:', transactionHash, 'on market', marketAddress);
+      });
+
+      await db.query(
+        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (tx_hash) DO NOTHING`,
+        [
+          transactionHash,
+          blockNumber,
+          user,
+          marketAddress,
+          outcome,
+          amount.toString(),
+          shares.toString(),
+          creatorFee.toString(),
+          platformFee.toString(),
+          timestamp
+        ]
+      );
+      console.log('Trade indexed:', transactionHash, 'on market', marketAddress);
+    } catch (err) {
+      console.error('Error handling Trade event:', err);
+    }
   });
   console.log('Listening for trades on market:', marketAddress);
 }
@@ -73,9 +77,13 @@ factory.on('MarketCreated', (marketAddress, creator, predictionId, event) => {
 
 // --- 2. On startup, listen to all existing markets ---
 async function listenToExistingMarkets() {
-  const marketAddresses = await factory.getMarkets();
-  for (const marketAddress of marketAddresses) {
-    listenToMarket(marketAddress);
+  try {
+    const marketAddresses = await factory.getMarkets();
+    for (const marketAddress of marketAddresses) {
+      listenToMarket(marketAddress);
+    }
+  } catch (err) {
+    console.error('Error fetching existing markets:', err);
   }
 }
 listenToExistingMarkets();
@@ -83,13 +91,26 @@ listenToExistingMarkets();
 // --- API Endpoint ---
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
-  const { rows } = await db.query(
-    'SELECT * FROM trades WHERE user_address = $1 ORDER BY timestamp DESC LIMIT 100',
-    [address.toLowerCase()]
-  );
-  res.json(rows);
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM trades WHERE user_address = $1 ORDER BY timestamp DESC LIMIT 100',
+      [address.toLowerCase()]
+    );
+    // Format values for display (MON)
+    const formatted = rows.map(row => ({
+      ...row,
+      amount_mon: ethers.formatEther(row.amount),
+      shares_mon: ethers.formatEther(row.shares),
+      creator_fee_mon: ethers.formatEther(row.creator_fee),
+      platform_fee_mon: ethers.formatEther(row.platform_fee),
+    }));
+    res.json(formatted);
+  } catch (err) {
+    console.error('API error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.listen(process.env.PORT || 3001, () => {
   console.log('API running on port', process.env.PORT || 3001);
-});
+}); 
