@@ -30,6 +30,15 @@ function listenToMarket(marketAddress) {
       const block = await provider.getBlock(blockNumber);
       const timestamp = new Date(block.timestamp * 1000);
 
+      // Fetch user's Farcaster FID from the contract
+      let userFid = null;
+      try {
+        userFid = await market.userFid(user);
+        if (userFid) userFid = userFid.toString();
+      } catch (e) {
+        console.warn('Could not fetch userFid for', user, e);
+      }
+
       // Debug log
       console.log('Trade event:', {
         transactionHash,
@@ -41,12 +50,13 @@ function listenToMarket(marketAddress) {
         shares,
         creatorFee,
         platformFee,
-        timestamp
+        timestamp,
+        userFid
       });
 
       await db.query(
-        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          ON CONFLICT (tx_hash) DO NOTHING`,
         [
           transactionHash,
@@ -58,10 +68,11 @@ function listenToMarket(marketAddress) {
           shares.toString(),
           creatorFee.toString(),
           platformFee.toString(),
-          timestamp
+          timestamp,
+          userFid
         ]
       );
-      console.log('Trade indexed:', transactionHash, 'on market', marketAddress);
+      console.log('Trade indexed:', transactionHash, 'on market', marketAddress, 'userFid:', userFid);
     } catch (err) {
       console.error('Error handling Trade event:', err);
     }
