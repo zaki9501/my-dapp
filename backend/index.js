@@ -294,6 +294,10 @@ app.get('/api/resolved-markets', async (req, res) => {
   }
 });
 
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 app.listen(process.env.PORT || 3001, () => {
   console.log('API running on port', process.env.PORT || 3001);
 }); 
