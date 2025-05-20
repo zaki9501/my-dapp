@@ -311,6 +311,18 @@ function listenToMarket(marketAddress) {
   });
   market.on('MarketResolved', async () => {
     await indexMarketMetadata(marketAddress);
+    // Update all trades for this market with the new outcome
+    const { rows } = await db.query(
+      'SELECT outcome FROM markets WHERE market_address = $1',
+      [marketAddress]
+    );
+    if (rows.length > 0) {
+      const outcome = rows[0].outcome;
+      await db.query(
+        'UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2',
+        [outcome, marketAddress]
+      );
+    }
   });
   console.log('Listening for trades and resolution on market:', marketAddress);
 }
