@@ -420,6 +420,30 @@ app.get('/api/resolved-markets', async (req, res) => {
   }
 });
 
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    // Aggregate stats per user
+    const { rows } = await db.query(`
+      SELECT
+        user_address,
+        COUNT(DISTINCT prediction_id) AS total_predictions,
+        COUNT(DISTINCT CASE WHEN user_outcome::int = resolved_outcome::int AND resolved_outcome IS NOT NULL THEN prediction_id END) AS correct_predictions,
+        COUNT(*) AS total_trades,
+        SUM(CASE WHEN resolved_outcome IS NOT NULL AND (CASE WHEN user_outcome::int = resolved_outcome::int THEN shares ELSE 0 END) > amount THEN 1 ELSE 0 END) AS profitable_trades,
+        SUM(CASE WHEN resolved_outcome IS NOT NULL THEN (CASE WHEN user_outcome::int = resolved_outcome::int THEN shares ELSE 0 END) - amount ELSE 0 END) AS total_pnl,
+        SUM(amount) AS total_volume
+      FROM trades
+      GROUP BY user_address
+      ORDER BY total_pnl DESC
+      LIMIT 20
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('Leaderboard API error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Health and root endpoints
 app.head('/', (req, res) => {
   res.status(200).end();
@@ -433,4 +457,11 @@ app.get('/health', (req, res) => {
 
 app.listen(process.env.PORT || 3001, () => {
   console.log('API running on port', process.env.PORT || 3001);
+});
+
+process.on('uncaughtException', err => {
+  console.error('Uncaught Exception:', err);
+});
+process.on('unhandledRejection', err => {
+  console.error('Unhandled Rejection:', err);
 });
