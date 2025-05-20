@@ -4,6 +4,11 @@ import { Pool } from 'pg';
 import express from 'express';
 import cors from 'cors';
 
+// Periodic outbound request to keep Railway service awake
+setInterval(() => {
+  fetch('https://api.coingecko.com/api/v3/ping').catch(() => {});
+}, 5 * 60 * 1000); // every 5 minutes
+
 const app = express();
 app.use(cors());
 
