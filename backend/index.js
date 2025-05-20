@@ -258,6 +258,42 @@ app.get('/api/user-trades/:address', async (req, res) => {
   }
 });
 
+// --- API Endpoint: Get resolved markets from DB ---
+app.get('/api/resolved-markets', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      "SELECT * FROM markets WHERE resolved = true ORDER BY resolution_date DESC LIMIT 100"
+    );
+    // Map and calculate yes_price and no_price
+    const formatted = rows.map(m => {
+      const yesPool = Number(m.yes_pool);
+      const noPool = Number(m.no_pool);
+      const totalPool = yesPool + noPool;
+      return {
+        prediction_id: m.prediction_id,
+        market_address: m.market_address,
+        question: m.question,
+        description: m.description,
+        category: m.category,
+        rule: m.rule,
+        resolution_date: m.resolution_date,
+        yes_pool: yesPool,
+        no_pool: noPool,
+        volume: Number(m.volume),
+        trades_count: Number(m.trades_count),
+        resolved: m.resolved,
+        outcome: m.outcome,
+        yes_price: totalPool > 0 ? yesPool / totalPool : 0.5,
+        no_price: totalPool > 0 ? noPool / totalPool : 0.5,
+      };
+    });
+    res.json(formatted);
+  } catch (err) {
+    console.error('API error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(process.env.PORT || 3001, () => {
   console.log('API running on port', process.env.PORT || 3001);
 }); 
