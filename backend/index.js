@@ -279,8 +279,8 @@ function listenToMarket(marketAddress) {
       }
 
       await db.query(
-        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid, prediction_id, resolved_outcome)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid, prediction_id, resolved_outcome, user_outcome)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (tx_hash) DO NOTHING`,
         [
           transactionHash,
@@ -295,7 +295,8 @@ function listenToMarket(marketAddress) {
           timestamp,
           userFid,
           predictionId,
-          resolvedOutcome
+          resolvedOutcome,
+          outcome
         ]
       );
       await indexMarketMetadata(marketAddress);
@@ -358,7 +359,8 @@ app.get('/api/user-trades/:address', async (req, res) => {
       creator_fee_mon: ethers.formatEther(row.creator_fee),
       platform_fee_mon: ethers.formatEther(row.platform_fee),
       prediction_id: row.prediction_id,
-      resolved_outcome: row.resolved_outcome
+      resolved_outcome: row.resolved_outcome,
+      user_outcome: row.user_outcome !== undefined ? row.user_outcome : row.outcome
     }));
     res.json(formatted);
   } catch (err) {
