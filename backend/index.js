@@ -14,95 +14,144 @@ const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
 const marketAbi = JSON.parse(process.env.CONTRACT_MARKET_ABI);
 
 const factory = new ethers.Contract(
-  process.env.FACTORY_ADDRESS, // Set this in Railway to your MarketFactory address
+  process.env.FACTORY_ADDRESS,
   factoryAbi,
   provider
 );
 
-// --- Helper: Listen to Trade events on a Market contract ---
-function listenToMarket(marketAddress) {
-  const market = new ethers.Contract(marketAddress, marketAbi, provider);
-  market.on('Trade', async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
+// --- Multicall3 ABI ---
+const multicall3Abi = [
+  {
+    "inputs": [
+      {
+        "components": [
+          { "internalType": "address", "name": "target", "type": "address" },
+          { "internalType": "bytes", "name": "callData", "type": "bytes" }
+        ],
+        "internalType": "struct Multicall3.Call[]",
+        "name": "calls",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "aggregate",
+    "outputs": [
+      { "internalType": "uint256", "name": "blockNumber", "type": "uint256" },
+      { "internalType": "bytes[]", "name": "returnData", "type": "bytes[]" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+];
+
+// --- Batch Index Market Metadata using Multicall3 ---
+async function batchIndexMarketMetadata(marketAddresses) {
+  if (!marketAddresses.length) return;
+  const iface = new ethers.Interface(marketAbi);
+  const multicall = new ethers.Contract(
+    '0xcA11bde05977b3631167028862bE2a173976CA11',
+    multicall3Abi,
+    provider
+  );
+
+  // Prepare all calls for all markets
+  const calls = [];
+  for (const address of marketAddresses) {
+    calls.push(
+      { target: address, callData: iface.encodeFunctionData('predictionId', []) },
+      { target: address, callData: iface.encodeFunctionData('question', []) },
+      { target: address, callData: iface.encodeFunctionData('description', []) },
+      { target: address, callData: iface.encodeFunctionData('category', []) },
+      { target: address, callData: iface.encodeFunctionData('rule', []) },
+      { target: address, callData: iface.encodeFunctionData('status', []) },
+      { target: address, callData: iface.encodeFunctionData('resolutionDate', []) },
+      { target: address, callData: iface.encodeFunctionData('resolved', []) },
+      { target: address, callData: iface.encodeFunctionData('winningOutcome', []) },
+      { target: address, callData: iface.encodeFunctionData('yesPool', []) },
+      { target: address, callData: iface.encodeFunctionData('noPool', []) },
+      { target: address, callData: iface.encodeFunctionData('volume', []) },
+      { target: address, callData: iface.encodeFunctionData('tradesCount', []) }
+    );
+  }
+
+  // Call multicall3
+  const [, returnData] = await multicall.aggregate(calls);
+
+  // Parse results and update DB
+  for (let i = 0; i < marketAddresses.length; i++) {
+    const base = i * 13;
     try {
-      const { transactionHash, blockNumber, address: marketAddress } = event.log;
-      const block = await provider.getBlock(blockNumber);
-      const timestamp = new Date(block.timestamp * 1000);
-
-      // Fetch user's Farcaster FID from the contract
-      let userFid = null;
-      try {
-        userFid = await market.userFid(user);
-        if (userFid) userFid = userFid.toString();
-      } catch (e) {
-        console.warn('Could not fetch userFid for', user, e);
-      }
-
-      // Fetch predictionId and resolved outcome from the contract
-      let predictionId = null;
-      let resolvedOutcome = null;
-      try {
-        predictionId = await market.predictionId();
-      } catch (e) {
-        console.warn('Could not fetch predictionId for', marketAddress, e);
-      }
-      try {
-        // resolved outcome: 0 or 1 if resolved, null/undefined if not
-        resolvedOutcome = await market.winningOutcome();
-      } catch (e) {
-        // Not resolved yet
-        resolvedOutcome = null;
-      }
-
-      // Debug log
-      console.log('Trade event:', {
-        transactionHash,
-        blockNumber,
-        user,
-        marketAddress,
-        outcome,
-        amount,
-        shares,
-        creatorFee,
-        platformFee,
-        timestamp,
-        userFid,
+      const [
         predictionId,
-        resolvedOutcome
-      });
+        question,
+        description,
+        category,
+        rule,
+        status,
+        resolutionDate,
+        resolved,
+        winningOutcome,
+        yesPool,
+        noPool,
+        volume,
+        tradesCount
+      ] = [
+        iface.decodeFunctionResult('predictionId', returnData[base])[0],
+        iface.decodeFunctionResult('question', returnData[base + 1])[0],
+        iface.decodeFunctionResult('description', returnData[base + 2])[0],
+        iface.decodeFunctionResult('category', returnData[base + 3])[0],
+        iface.decodeFunctionResult('rule', returnData[base + 4])[0],
+        iface.decodeFunctionResult('status', returnData[base + 5])[0],
+        iface.decodeFunctionResult('resolutionDate', returnData[base + 6])[0],
+        iface.decodeFunctionResult('resolved', returnData[base + 7])[0],
+        iface.decodeFunctionResult('winningOutcome', returnData[base + 8])[0],
+        iface.decodeFunctionResult('yesPool', returnData[base + 9])[0],
+        iface.decodeFunctionResult('noPool', returnData[base + 10])[0],
+        iface.decodeFunctionResult('volume', returnData[base + 11])[0],
+        iface.decodeFunctionResult('tradesCount', returnData[base + 12])[0]
+      ];
 
       await db.query(
-        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid, prediction_id, resolved_outcome)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-         ON CONFLICT (tx_hash) DO NOTHING`,
+        `INSERT INTO markets (
+          market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14)
+        ON CONFLICT (market_address) DO UPDATE SET
+          prediction_id = EXCLUDED.prediction_id,
+          question = EXCLUDED.question,
+          description = EXCLUDED.description,
+          category = EXCLUDED.category,
+          rule = EXCLUDED.rule,
+          status = EXCLUDED.status,
+          resolution_date = EXCLUDED.resolution_date,
+          resolved = EXCLUDED.resolved,
+          outcome = EXCLUDED.outcome,
+          yes_pool = EXCLUDED.yes_pool,
+          no_pool = EXCLUDED.no_pool,
+          volume = EXCLUDED.volume,
+          trades_count = EXCLUDED.trades_count`,
         [
-          transactionHash,
-          blockNumber,
-          user,
-          marketAddress,
-          outcome,
-          amount.toString(),
-          shares.toString(),
-          creatorFee.toString(),
-          platformFee.toString(),
-          timestamp,
-          userFid,
+          marketAddresses[i],
           predictionId,
-          resolvedOutcome
+          question,
+          description,
+          category,
+          rule,
+          status,
+          Number(resolutionDate),
+          resolved,
+          winningOutcome,
+          ethers.formatEther(yesPool),
+          ethers.formatEther(noPool),
+          ethers.formatEther(volume),
+          Number(tradesCount)
         ]
       );
-      console.log('Trade indexed:', transactionHash, 'on market', marketAddress, 'userFid:', userFid, 'predictionId:', predictionId, 'resolvedOutcome:', resolvedOutcome);
-      await indexMarketMetadata(marketAddress);
     } catch (err) {
-      console.error('Error handling Trade event:', err);
+      console.error('Error parsing multicall result for', marketAddresses[i], err);
     }
-  });
-  market.on('MarketResolved', async () => {
-    await indexMarketMetadata(marketAddress);
-  });
-  console.log('Listening for trades and resolution on market:', marketAddress);
+  }
 }
 
-// --- Helper: Listen to Market events and update markets table ---
+// --- Single Market Indexing for Events ---
 async function indexMarketMetadata(marketAddress) {
   const market = new ethers.Contract(marketAddress, marketAbi, provider);
   try {
@@ -187,8 +236,8 @@ factory.on('MarketCreated', async (marketAddress, creator, predictionId, event) 
 async function listenToExistingMarkets() {
   try {
     const marketAddresses = await factory.getMarkets();
+    await batchIndexMarketMetadata(marketAddresses);
     for (const marketAddress of marketAddresses) {
-      await indexMarketMetadata(marketAddress);
       listenToMarket(marketAddress);
     }
   } catch (err) {
@@ -197,7 +246,71 @@ async function listenToExistingMarkets() {
 }
 listenToExistingMarkets();
 
-// --- API Endpoint: Get all trades for a market ---
+// --- Helper: Listen to Trade events on a Market contract ---
+function listenToMarket(marketAddress) {
+  const market = new ethers.Contract(marketAddress, marketAbi, provider);
+  market.on('Trade', async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
+    try {
+      const { transactionHash, blockNumber, address: marketAddress } = event.log;
+      const block = await provider.getBlock(blockNumber);
+      const timestamp = new Date(block.timestamp * 1000);
+
+      // Fetch user's Farcaster FID from the contract
+      let userFid = null;
+      try {
+        userFid = await market.userFid(user);
+        if (userFid) userFid = userFid.toString();
+      } catch (e) {
+        console.warn('Could not fetch userFid for', user, e);
+      }
+
+      // Fetch predictionId and resolved outcome from the contract
+      let predictionId = null;
+      let resolvedOutcome = null;
+      try {
+        predictionId = await market.predictionId();
+      } catch (e) {
+        console.warn('Could not fetch predictionId for', marketAddress, e);
+      }
+      try {
+        resolvedOutcome = await market.winningOutcome();
+      } catch (e) {
+        resolvedOutcome = null;
+      }
+
+      await db.query(
+        `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid, prediction_id, resolved_outcome)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (tx_hash) DO NOTHING`,
+        [
+          transactionHash,
+          blockNumber,
+          user,
+          marketAddress,
+          outcome,
+          amount.toString(),
+          shares.toString(),
+          creatorFee.toString(),
+          platformFee.toString(),
+          timestamp,
+          userFid,
+          predictionId,
+          resolvedOutcome
+        ]
+      );
+      await indexMarketMetadata(marketAddress);
+    } catch (err) {
+      console.error('Error handling Trade event:', err);
+    }
+  });
+  market.on('MarketResolved', async () => {
+    await indexMarketMetadata(marketAddress);
+  });
+  console.log('Listening for trades and resolution on market:', marketAddress);
+}
+
+// --- API Endpoints (unchanged) ---
+
 app.get('/api/market-trades/:marketAddress', async (req, res) => {
   const { marketAddress } = req.params;
   try {
@@ -205,7 +318,6 @@ app.get('/api/market-trades/:marketAddress', async (req, res) => {
       'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
       [marketAddress.toLowerCase()]
     );
-    // Format values for display (MON)
     const formatted = rows.map(row => ({
       ...row,
       amount_mon: ethers.formatEther(row.amount),
@@ -220,7 +332,6 @@ app.get('/api/market-trades/:marketAddress', async (req, res) => {
   }
 });
 
-// --- API Endpoint: Get live markets from DB ---
 app.get('/api/live-markets', async (req, res) => {
   try {
     const { rows } = await db.query(
@@ -233,7 +344,6 @@ app.get('/api/live-markets', async (req, res) => {
   }
 });
 
-// --- API Endpoint ---
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
@@ -241,7 +351,6 @@ app.get('/api/user-trades/:address', async (req, res) => {
       'SELECT * FROM trades WHERE user_address = $1 ORDER BY timestamp DESC LIMIT 100',
       [address.toLowerCase()]
     );
-    // Format values for display (MON)
     const formatted = rows.map(row => ({
       ...row,
       amount_mon: ethers.formatEther(row.amount),
@@ -258,13 +367,11 @@ app.get('/api/user-trades/:address', async (req, res) => {
   }
 });
 
-// --- API Endpoint: Get resolved markets from DB ---
 app.get('/api/resolved-markets', async (req, res) => {
   try {
     const { rows } = await db.query(
       "SELECT * FROM markets WHERE resolved = true ORDER BY resolution_date DESC LIMIT 100"
     );
-    // Map and calculate yes_price and no_price
     const formatted = rows.map(m => {
       const yesPool = Number(m.yes_pool);
       const noPool = Number(m.no_pool);
@@ -294,20 +401,17 @@ app.get('/api/resolved-markets', async (req, res) => {
   }
 });
 
-// Respond to HEAD requests at root
+// Health and root endpoints
 app.head('/', (req, res) => {
   res.status(200).end();
 });
-
-// (Optional) Also respond to GET requests at root
 app.get('/', (req, res) => {
   res.status(200).send('OK');
 });
-
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
 app.listen(process.env.PORT || 3001, () => {
   console.log('API running on port', process.env.PORT || 3001);
-}); 
+});
