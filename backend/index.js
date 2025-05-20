@@ -349,7 +349,7 @@ app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
     const { rows } = await db.query(
-      'SELECT * FROM trades WHERE user_address = $1 ORDER BY timestamp DESC LIMIT 100',
+      'SELECT * FROM trades WHERE LOWER(user_address) = $1 ORDER BY timestamp DESC LIMIT 100',
       [address.toLowerCase()]
     );
     const formatted = rows.map(row => ({
