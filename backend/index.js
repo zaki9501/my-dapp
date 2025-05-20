@@ -294,6 +294,16 @@ app.get('/api/resolved-markets', async (req, res) => {
   }
 });
 
+// Respond to HEAD requests at root
+app.head('/', (req, res) => {
+  res.status(200).end();
+});
+
+// (Optional) Also respond to GET requests at root
+app.get('/', (req, res) => {
+  res.status(200).send('OK');
+});
+
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
