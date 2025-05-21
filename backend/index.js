@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { Pool } from 'pg';
 import express from 'express';
 import cors from 'cors';
+import fetch from 'node-fetch';
 
 // Initialize Express app
 const app = express();
@@ -515,13 +516,35 @@ app.get('/api/activity', async (req, res) => {
   const fids = req.query.fids ? req.query.fids.split(',').map(fid => fid.trim()) : [];
   if (!fids.length) return res.json([]);
 
+  const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
+  const profileCache = {};
+
   try {
-    // Query recent trades for these FIDs (adjust table/column names as needed)
+    // Query recent trades for these FIDs
     const { rows } = await db.query(
       `SELECT * FROM trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
       [fids]
     );
-    res.json(rows);
+    // Enrich with Neynar profile info and format
+    const enriched = await Promise.all(rows.map(async (row) => {
+      let username = '', avatar = '';
+      if (row.user_fid && NEYNAR_API_KEY) {
+        const profile = await fetchNeynarProfile(row.user_fid, NEYNAR_API_KEY, profileCache);
+        username = profile.username;
+        avatar = profile.avatar;
+      }
+      return {
+        id: row.tx_hash,
+        username,
+        avatar,
+        action: 'prediction', // or infer from row if you have more types
+        details: row.prediction_id || '',
+        timestamp: row.timestamp,
+        amount: ethers.formatEther(row.amount),
+        prediction: row.outcome === 1 || row.outcome === '1' ? 'yes' : 'no',
+      };
+    }));
+    res.json(enriched);
   } catch (err) {
     console.error('API error in /api/activity:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -626,3 +649,26 @@ process.on('SIGTERM', async () => {
   await db.end();
   process.exit(0);
 });
+
+async function fetchNeynarProfile(fid, apiKey, cache) {
+  if (cache[fid]) return cache[fid];
+  try {
+    const res = await fetch(`https://api.neynar.com/v2/farcaster/user?fid=${fid}`, {
+      headers: { 'x-api-key': apiKey }
+    });
+    const data = await res.json();
+    if (data && data.result && data.result.user) {
+      const user = data.result.user;
+      const profile = {
+        username: user.username || '',
+        avatar: user.pfp_url || '',
+      };
+      cache[fid] = profile;
+      return profile;
+    }
+  } catch (e) {
+    // fallback
+  }
+  cache[fid] = { username: '', avatar: '' };
+  return cache[fid];
+}
