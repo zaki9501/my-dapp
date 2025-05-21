@@ -34,28 +34,14 @@ async function ensureDbConnection() {
 }
 
 // --- Provider Setup (HTTP) ---
-let provider;
-function initializeProvider() {
-  provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-  console.log('HTTP provider initialized');
-}
-initializeProvider();
-
-// Optionally, check connection health
-setInterval(async () => {
-  try {
-    await provider.getBlockNumber();
-    console.log('HTTP provider connection alive: true');
-  } catch (err) {
-    console.log('HTTP provider connection alive: false', err.message);
-  }
-}, 60 * 1000);
+const wsProvider = new ethers.WebSocketProvider(process.env.WS_RPC_URL); // For events
+const httpProvider = new ethers.JsonRpcProvider(process.env.RPC_URL);    // For reads/writes
 
 // --- Contract Setup ---
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
 const marketAbi = JSON.parse(process.env.CONTRACT_MARKET_ABI);
 
-let factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, provider);
+let factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, httpProvider);
 
 // Multicall3 ABI
 const multicall3Abi = [
@@ -81,12 +67,12 @@ const multicall3Abi = [
   },
 ];
 
-let multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, provider);
+let multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, httpProvider);
 
 // Reinitialize contracts after WebSocket reconnect
 function reinitializeContracts() {
-  factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, provider);
-  multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, provider);
+  factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, httpProvider);
+  multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, httpProvider);
   console.log('Contracts reinitialized after WebSocket reconnect');
 }
 
@@ -201,7 +187,8 @@ async function batchIndexMarketMetadata(marketAddresses) {
 
 // --- Single Market Indexing for Events ---
 async function indexMarketMetadata(marketAddress) {
-  const market = new ethers.Contract(marketAddress, marketAbi, provider);
+  const contractForEvents = new ethers.Contract(marketAddress, marketAbi, wsProvider);
+  const contractForReads = new ethers.Contract(marketAddress, marketAbi, httpProvider);
   try {
     const [
       predictionId,
@@ -218,19 +205,19 @@ async function indexMarketMetadata(marketAddress) {
       volume,
       tradesCount,
     ] = await Promise.all([
-      market.predictionId(),
-      market.question(),
-      market.description(),
-      market.category(),
-      market.rule(),
-      market.status(),
-      market.resolutionDate(),
-      market.resolved(),
-      market.winningOutcome().catch(() => null),
-      market.yesPool(),
-      market.noPool(),
-      market.volume(),
-      market.tradesCount(),
+      contractForEvents.predictionId(),
+      contractForEvents.question(),
+      contractForEvents.description(),
+      contractForEvents.category(),
+      contractForEvents.rule(),
+      contractForEvents.status(),
+      contractForEvents.resolutionDate(),
+      contractForEvents.resolved(),
+      contractForEvents.winningOutcome().catch(() => null),
+      contractForEvents.yesPool(),
+      contractForEvents.noPool(),
+      contractForEvents.volume(),
+      contractForEvents.tradesCount(),
     ]);
     console.log(`Indexing market ${marketAddress}: predictionId=${predictionId}, resolved=${resolved}`);
 
@@ -288,7 +275,7 @@ const marketListeners = new Map();
 
 function cleanupMarketListeners() {
   marketListeners.forEach(({ tradeListener, resolvedListener }, marketAddress) => {
-    const market = new ethers.Contract(marketAddress, marketAbi, provider);
+    const market = new ethers.Contract(marketAddress, marketAbi, httpProvider);
     market.removeListener('Trade', tradeListener);
     market.removeListener('MarketResolved', resolvedListener);
     console.log('Cleaned up listeners for market:', marketAddress);
@@ -297,18 +284,19 @@ function cleanupMarketListeners() {
 }
 
 function listenToMarket(marketAddress) {
-  const market = new ethers.Contract(marketAddress, marketAbi, provider);
+  const contractForEvents = new ethers.Contract(marketAddress, marketAbi, wsProvider);
+  const contractForReads = new ethers.Contract(marketAddress, marketAbi, httpProvider);
 
   const tradeListener = async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
     try {
       const { transactionHash, blockNumber, address: marketAddress } = event.log;
-      const block = await provider.getBlock(blockNumber);
+      const block = await httpProvider.getBlock(blockNumber);
       const timestamp = new Date(block.timestamp * 1000);
 
       // Fetch user's Farcaster FID from the contract
       let userFid = null;
       try {
-        userFid = await market.userFid(user);
+        userFid = await contractForReads.userFid(user);
         if (userFid) userFid = userFid.toString();
       } catch (e) {
         console.warn('Could not fetch userFid for', user, e);
@@ -318,12 +306,12 @@ function listenToMarket(marketAddress) {
       let predictionId = null;
       let resolvedOutcome = null;
       try {
-        predictionId = await market.predictionId();
+        predictionId = await contractForEvents.predictionId();
       } catch (e) {
         console.warn('Could not fetch predictionId for', marketAddress, e);
       }
       try {
-        resolvedOutcome = await market.winningOutcome();
+        resolvedOutcome = await contractForEvents.winningOutcome();
       } catch (e) {
         resolvedOutcome = null;
       }
@@ -367,8 +355,8 @@ function listenToMarket(marketAddress) {
           // Update trades with resolved outcome
           await db.query('UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2', [outcome, marketAddress]);
           // Clean up listeners for resolved market
-          market.removeListener('Trade', tradeListener);
-          market.removeListener('MarketResolved', resolvedListener);
+          contractForEvents.removeListener('Trade', tradeListener);
+          contractForEvents.removeListener('MarketResolved', resolvedListener);
           marketListeners.delete(marketAddress);
           console.log('Cleaned up listeners for resolved market:', marketAddress);
         }
@@ -378,8 +366,8 @@ function listenToMarket(marketAddress) {
     }
   };
 
-  market.on('Trade', tradeListener);
-  market.on('MarketResolved', resolvedListener);
+  contractForEvents.on('Trade', tradeListener);
+  contractForEvents.on('MarketResolved', resolvedListener);
 
   marketListeners.set(marketAddress, { tradeListener, resolvedListener });
   console.log('Listening for trades and resolution on market:', marketAddress);
