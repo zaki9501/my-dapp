@@ -53,7 +53,6 @@ let multicall;
 async function initializeWsProvider() {
   try {
     wsProvider = new ethers.WebSocketProvider(process.env.WS_RPC_URL);
-    // Test the provider by fetching the block number
     await wsProvider.getBlockNumber();
     console.log('WebSocket provider initialized successfully');
     return true;
@@ -75,12 +74,12 @@ async function initializeProviders() {
     const success = await initializeWsProvider();
     if (success) break;
     console.log(`Retrying WebSocket provider initialization (attempt ${attempts}/${maxAttempts})...`);
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retrying
+    await new Promise(resolve => setTimeout(resolve, 5000));
   }
 
   if (!wsProvider) {
     console.error('Failed to initialize WebSocket provider after max attempts, falling back to HTTP provider');
-    wsProvider = httpProvider; // Fallback to HTTP provider for events
+    wsProvider = httpProvider;
   }
 }
 
@@ -94,19 +93,13 @@ async function monitorWsProvider() {
     cleanupMarketListeners();
     await initializeProviders();
     reinitializeContracts();
+    setupFactoryListeners(); // Reattach factory listeners
     await listenToExistingMarkets();
   }
 }
 
 // Run provider health check every 5 minutes
 setInterval(monitorWsProvider, 5 * 60 * 1000);
-
-// Initialize providers on startup
-(async () => {
-  await initializeProviders();
-  reinitializeContracts();
-  await listenToExistingMarkets();
-})();
 
 // --- Contract Setup ---
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
@@ -141,6 +134,29 @@ function reinitializeContracts() {
   multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, httpProvider);
   console.log('Contracts reinitialized');
 }
+
+// Function to set up factory event listeners
+function setupFactoryListeners() {
+  factory.on('MarketCreated', async (marketAddress, creator, predictionId, event) => {
+    console.log('New market created at:', marketAddress);
+    await indexMarketMetadata(marketAddress);
+    listenToMarket(marketAddress);
+  });
+  console.log('Factory event listeners set up');
+}
+
+// Initialize providers and contracts on startup
+(async () => {
+  try {
+    await initializeProviders();
+    reinitializeContracts();
+    setupFactoryListeners(); // Set up factory listeners after initialization
+    await listenToExistingMarkets();
+  } catch (err) {
+    console.error('Failed to initialize application:', err.message, err.stack);
+    process.exit(1); // Exit with failure if initialization fails
+  }
+})();
 
 // --- Batch Index Market Metadata using Multicall3 ---
 async function batchIndexMarketMetadata(marketAddresses) {
@@ -325,13 +341,6 @@ async function indexMarketMetadata(marketAddress) {
   }
 }
 
-// --- Listen to MarketCreated and update markets table ---
-factory.on('MarketCreated', async (marketAddress, creator, predictionId, event) => {
-  console.log('New market created at:', marketAddress);
-  await indexMarketMetadata(marketAddress);
-  listenToMarket(marketAddress);
-});
-
 // --- Manage Market Event Listeners ---
 const marketListeners = new Map();
 
@@ -423,7 +432,6 @@ function listenToMarket(marketAddress) {
       console.log(`Processed Trade event for market ${marketAddress}`);
     } catch (err) {
       console.error('Error handling Trade event:', err.message, err.stack);
-      // If event processing fails, it might indicate a provider issue
       monitorWsProvider();
     }
   };
@@ -467,7 +475,7 @@ async function listenToExistingMarkets() {
     }
   } catch (err) {
     console.error('Error fetching existing markets:', err.message, err.stack);
-    monitorWsProvider(); // Trigger provider check on failure
+    monitorWsProvider();
   }
 }
 
