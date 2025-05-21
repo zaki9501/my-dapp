@@ -543,9 +543,55 @@ app.get('/api/expired-markets', async (req, res) => {
 
 app.get('/api/user-portfolio/:address', async (req, res) => {
   const { address } = req.params;
-  // Query your DB for all markets and the user's shares (from events or a shares table)
-  // Or, if you must, batch on-chain calls here and cache the result for a few seconds
-  // Return all market data + user shares in one response
+  try {
+    await ensureDbConnection();
+    // Get all trades for this user
+    const { rows: trades } = await db.query(
+      'SELECT * FROM trades WHERE LOWER(user_address) = $1',
+      [address.toLowerCase()]
+    );
+    // Get all markets
+    const { rows: markets } = await db.query('SELECT * FROM markets');
+    // Map user shares per market
+    const sharesByMarket = {};
+    for (const trade of trades) {
+      if (!sharesByMarket[trade.market_address]) {
+        sharesByMarket[trade.market_address] = { yes: 0, no: 0 };
+      }
+      if (trade.outcome === 1 || trade.outcome === '1') {
+        sharesByMarket[trade.market_address].yes += Number(trade.shares_mon);
+      } else {
+        sharesByMarket[trade.market_address].no += Number(trade.shares_mon);
+      }
+    }
+    // Build portfolio
+    const portfolio = markets.map(market => ({
+      id: market.prediction_id,
+      marketAddress: market.market_address,
+      question: market.question,
+      description: market.description,
+      category: market.category,
+      rule: market.rule,
+      endDate: market.resolution_date,
+      yesPrice: market.yes_pool, // or calculate
+      noPrice: market.no_pool,   // or calculate
+      volume: market.volume,
+      tradesCount: market.trades_count,
+      status: market.status,
+      resolved: market.resolved,
+      outcome: market.outcome,
+      yesPool: market.yes_pool,
+      noPool: market.no_pool,
+      creator: market.creator,
+      yesShares: sharesByMarket[market.market_address]?.yes || 0,
+      noShares: sharesByMarket[market.market_address]?.no || 0,
+    }));
+    // Only return markets where user has shares
+    res.json(portfolio.filter(m => m.yesShares > 0 || m.noShares > 0));
+  } catch (err) {
+    console.error('API error /user-portfolio:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Health and root endpoints
