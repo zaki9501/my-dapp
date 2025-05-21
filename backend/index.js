@@ -41,7 +41,7 @@ const httpProvider = new ethers.JsonRpcProvider(process.env.RPC_URL);    // For 
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
 const marketAbi = JSON.parse(process.env.CONTRACT_MARKET_ABI);
 
-let factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, httpProvider);
+let factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, wsProvider);
 
 // Multicall3 ABI
 const multicall3Abi = [
@@ -71,7 +71,7 @@ let multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11'
 
 // Reinitialize contracts after WebSocket reconnect
 function reinitializeContracts() {
-  factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, httpProvider);
+  factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, wsProvider);
   multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, httpProvider);
   console.log('Contracts reinitialized after WebSocket reconnect');
 }
