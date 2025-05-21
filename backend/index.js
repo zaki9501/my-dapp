@@ -541,6 +541,13 @@ app.get('/api/expired-markets', async (req, res) => {
   }
 });
 
+app.get('/api/user-portfolio/:address', async (req, res) => {
+  const { address } = req.params;
+  // Query your DB for all markets and the user's shares (from events or a shares table)
+  // Or, if you must, batch on-chain calls here and cache the result for a few seconds
+  // Return all market data + user shares in one response
+});
+
 // Health and root endpoints
 app.head('/', (req, res) => {
   res.status(200).end();
