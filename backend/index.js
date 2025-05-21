@@ -15,12 +15,22 @@ const db = new Pool({
   idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
   connectionTimeoutMillis: 5000, // Timeout connection attempts after 5 seconds
   max: 10, // Max number of connections in the pool
+  keepAlive: true, // Enable TCP keep-alive to prevent connection drops
 });
 
-// Handle database pool errors
+// Handle database pool errors and attempt reconnection
 db.on('error', (err, client) => {
   console.error('Database pool error:', err.stack);
   client.release();
+  // Attempt to reconnect by creating a new pool
+  setTimeout(async () => {
+    try {
+      await db.connect();
+      console.log('Reconnected to database pool');
+    } catch (reconnectErr) {
+      console.error('Failed to reconnect to database:', reconnectErr.stack);
+    }
+  }, 5000);
 });
 
 // Function to ensure database connection is alive before queries
@@ -29,14 +39,41 @@ async function ensureDbConnection() {
     await db.query('SELECT 1');
     console.log('Database connection check successful');
   } catch (err) {
-    console.error('Database connection check failed:', err);
+    console.error('Database connection check failed:', err.stack);
     throw err;
   }
 }
 
-// --- Provider Setup (HTTP) ---
-const wsProvider = new ethers.WebSocketProvider(process.env.WS_RPC_URL); // For events
-const httpProvider = new ethers.JsonRpcProvider(process.env.RPC_URL);    // For reads/writes
+// --- Provider Setup with Reconnection Logic ---
+let wsProvider;
+let httpProvider;
+
+function initializeProviders() {
+  wsProvider = new ethers.WebSocketProvider(process.env.WS_RPC_URL);
+  httpProvider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+
+  // WebSocket reconnection logic
+  wsProvider._websocket.on('close', () => {
+    console.log('WebSocket disconnected, attempting to reconnect...');
+    cleanupMarketListeners(); // Clean up listeners before reconnect
+    setTimeout(() => {
+      initializeProviders();
+      reinitializeContracts();
+      listenToExistingMarkets(); // Reattach listeners after reconnect
+    }, 5000); // Retry after 5 seconds
+  });
+  wsProvider._websocket.on('error', (err) => {
+    console.error('WebSocket error:', err);
+  });
+
+  console.log('Providers initialized');
+}
+initializeProviders();
+
+// Monitor WebSocket connection status
+setInterval(() => {
+  console.log('WebSocket connection alive:', wsProvider._websocket.readyState === 1);
+}, 60 * 1000); // Log every minute
 
 // --- Contract Setup ---
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
@@ -82,7 +119,6 @@ async function batchIndexMarketMetadata(marketAddresses) {
   if (!marketAddresses.length) return;
   const iface = new ethers.Interface(marketAbi);
 
-  // Prepare all calls for all markets
   const calls = [];
   for (const address of marketAddresses) {
     calls.push(
@@ -102,11 +138,9 @@ async function batchIndexMarketMetadata(marketAddresses) {
     );
   }
 
-  // Call multicall3
   try {
     const [, returnData] = await multicall.aggregate(calls);
 
-    // Parse results and update DB
     for (let i = 0; i < marketAddresses.length; i++) {
       const base = i * 13;
       try {
@@ -188,7 +222,6 @@ async function batchIndexMarketMetadata(marketAddresses) {
 
 // --- Single Market Indexing for Events ---
 async function indexMarketMetadata(marketAddress) {
-  const contractForEvents = new ethers.Contract(marketAddress, marketAbi, wsProvider);
   const contractForReads = new ethers.Contract(marketAddress, marketAbi, httpProvider);
   try {
     const [
@@ -206,19 +239,19 @@ async function indexMarketMetadata(marketAddress) {
       volume,
       tradesCount,
     ] = await Promise.all([
-      contractForEvents.predictionId(),
-      contractForEvents.question(),
-      contractForEvents.description(),
-      contractForEvents.category(),
-      contractForEvents.rule(),
-      contractForEvents.status(),
-      contractForEvents.resolutionDate(),
-      contractForEvents.resolved(),
-      contractForEvents.winningOutcome().catch(() => null),
-      contractForEvents.yesPool(),
-      contractForEvents.noPool(),
-      contractForEvents.volume(),
-      contractForEvents.tradesCount(),
+      contractForReads.predictionId(),
+      contractForReads.question(),
+      contractForReads.description(),
+      contractForReads.category(),
+      contractForReads.rule(),
+      contractForReads.status(),
+      contractForReads.resolutionDate(),
+      contractForReads.resolved(),
+      contractForReads.winningOutcome().catch(() => null),
+      contractForReads.yesPool(),
+      contractForReads.noPool(),
+      contractForReads.volume(),
+      contractForReads.tradesCount(),
     ]);
     console.log(`Indexing market ${marketAddress}: predictionId=${predictionId}, resolved=${resolved}`);
 
@@ -276,13 +309,34 @@ const marketListeners = new Map();
 
 function cleanupMarketListeners() {
   marketListeners.forEach(({ tradeListener, resolvedListener }, marketAddress) => {
-    const market = new ethers.Contract(marketAddress, marketAbi, httpProvider);
+    const market = new ethers.Contract(marketAddress, marketAbi, wsProvider);
     market.removeListener('Trade', tradeListener);
     market.removeListener('MarketResolved', resolvedListener);
     console.log('Cleaned up listeners for market:', marketAddress);
   });
   marketListeners.clear();
 }
+
+// Periodic cleanup of inactive markets (e.g., resolved or old markets)
+setInterval(async () => {
+  try {
+    const { rows } = await db.query(
+      'SELECT market_address, resolved FROM markets WHERE resolved = true OR resolution_date < NOW() - INTERVAL \'30 days\''
+    );
+    for (const { market_address, resolved } of rows) {
+      if (marketListeners.has(market_address)) {
+        const { tradeListener, resolvedListener } = marketListeners.get(market_address);
+        const market = new ethers.Contract(market_address, marketAbi, wsProvider);
+        market.removeListener('Trade', tradeListener);
+        market.removeListener('MarketResolved', resolvedListener);
+        marketListeners.delete(market_address);
+        console.log(`Cleaned up listeners for inactive/resolved market: ${market_address}`);
+      }
+    }
+  } catch (err) {
+    console.error('Error during periodic market listener cleanup:', err.message, err.stack);
+  }
+}, 6 * 60 * 60 * 1000); // Run every 6 hours
 
 function listenToMarket(marketAddress) {
   const contractForEvents = new ethers.Contract(marketAddress, marketAbi, wsProvider);
@@ -294,7 +348,6 @@ function listenToMarket(marketAddress) {
       const block = await httpProvider.getBlock(blockNumber);
       const timestamp = new Date(block.timestamp * 1000);
 
-      // Fetch user's Farcaster FID from the contract
       let userFid = null;
       try {
         userFid = await contractForReads.userFid(user);
@@ -303,16 +356,15 @@ function listenToMarket(marketAddress) {
         console.warn('Could not fetch userFid for', user, e);
       }
 
-      // Fetch predictionId and resolved outcome from the contract
       let predictionId = null;
       let resolvedOutcome = null;
       try {
-        predictionId = await contractForEvents.predictionId();
+        predictionId = await contractForReads.predictionId();
       } catch (e) {
         console.warn('Could not fetch predictionId for', marketAddress, e);
       }
       try {
-        resolvedOutcome = await contractForEvents.winningOutcome();
+        resolvedOutcome = await contractForReads.winningOutcome();
       } catch (e) {
         resolvedOutcome = null;
       }
@@ -353,10 +405,8 @@ function listenToMarket(marketAddress) {
       if (rows.length > 0) {
         const { resolved, outcome } = rows[0];
         if (resolved) {
-          // Update trades with resolved outcome
           const resolvedOutcomeInt = typeof outcome === 'boolean' ? (outcome ? 1 : 0) : outcome;
           await db.query('UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2', [resolvedOutcomeInt, marketAddress]);
-          // Clean up listeners for resolved market
           contractForEvents.removeListener('Trade', tradeListener);
           contractForEvents.removeListener('MarketResolved', resolvedListener);
           marketListeners.delete(marketAddress);
@@ -510,9 +560,7 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
-// Add this after your other API endpoints
 app.get('/api/activity', async (req, res) => {
-  // Accept comma-separated FIDs as a query param
   const fids = req.query.fids ? req.query.fids.split(',').map(fid => fid.trim()) : [];
   if (!fids.length) return res.json([]);
 
@@ -520,12 +568,12 @@ app.get('/api/activity', async (req, res) => {
   const profileCache = {};
 
   try {
-    // Query recent trades for these FIDs
+    await ensureDbConnection();
     const { rows } = await db.query(
       `SELECT * FROM trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
       [fids]
     );
-    // Enrich with Neynar profile info and format
+
     const enriched = await Promise.all(rows.map(async (row) => {
       let username = '', avatar = '';
       if (row.user_fid && NEYNAR_API_KEY) {
@@ -537,7 +585,7 @@ app.get('/api/activity', async (req, res) => {
         id: row.tx_hash,
         username,
         avatar,
-        action: 'prediction', // or infer from row if you have more types
+        action: 'prediction',
         details: row.prediction_id || '',
         timestamp: row.timestamp,
         amount: ethers.formatEther(row.amount),
@@ -546,7 +594,7 @@ app.get('/api/activity', async (req, res) => {
     }));
     res.json(enriched);
   } catch (err) {
-    console.error('API error in /api/activity:', err);
+    console.error('API error in /api/activity:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -568,14 +616,12 @@ app.get('/api/user-portfolio/:address', async (req, res) => {
   const { address } = req.params;
   try {
     await ensureDbConnection();
-    // Get all trades for this user
     const { rows: trades } = await db.query(
       'SELECT * FROM trades WHERE LOWER(user_address) = $1',
       [address.toLowerCase()]
     );
-    // Get all markets
     const { rows: markets } = await db.query('SELECT * FROM markets');
-    // Map user shares per market
+
     const sharesByMarket = {};
     for (const trade of trades) {
       if (!sharesByMarket[trade.market_address]) {
@@ -587,7 +633,7 @@ app.get('/api/user-portfolio/:address', async (req, res) => {
         sharesByMarket[trade.market_address].no += Number(trade.shares_mon);
       }
     }
-    // Build portfolio
+
     const portfolio = markets.map(market => ({
       id: market.prediction_id,
       marketAddress: market.market_address,
@@ -596,8 +642,8 @@ app.get('/api/user-portfolio/:address', async (req, res) => {
       category: market.category,
       rule: market.rule,
       endDate: market.resolution_date,
-      yesPrice: market.yes_pool, // or calculate
-      noPrice: market.no_pool,   // or calculate
+      yesPrice: market.yes_pool,
+      noPrice: market.no_pool,
       volume: market.volume,
       tradesCount: market.trades_count,
       status: market.status,
@@ -609,10 +655,10 @@ app.get('/api/user-portfolio/:address', async (req, res) => {
       yesShares: sharesByMarket[market.market_address]?.yes || 0,
       noShares: sharesByMarket[market.market_address]?.no || 0,
     }));
-    // Only return markets where user has shares
+
     res.json(portfolio.filter(m => m.yesShares > 0 || m.noShares > 0));
   } catch (err) {
-    console.error('API error /user-portfolio:', err);
+    console.error('API error /user-portfolio:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -647,15 +693,24 @@ process.on('SIGTERM', async () => {
   console.log('Received SIGTERM, shutting down...');
   cleanupMarketListeners();
   await db.end();
+  wsProvider.destroy();
   process.exit(0);
 });
 
+// Fetch Neynar profile with timeout
 async function fetchNeynarProfile(fid, apiKey, cache) {
   if (cache[fid]) return cache[fid];
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+
   try {
     const res = await fetch(`https://api.neynar.com/v2/farcaster/user?fid=${fid}`, {
-      headers: { 'x-api-key': apiKey }
+      headers: { 'x-api-key': apiKey },
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
+
     const data = await res.json();
     if (data && data.result && data.result.user) {
       const user = data.result.user;
@@ -667,8 +722,10 @@ async function fetchNeynarProfile(fid, apiKey, cache) {
       return profile;
     }
   } catch (e) {
-    // fallback
+    clearTimeout(timeoutId);
+    console.error(`Error fetching Neynar profile for FID ${fid}:`, e.message);
   }
+
   cache[fid] = { username: '', avatar: '' };
   return cache[fid];
 }
