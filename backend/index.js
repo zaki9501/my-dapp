@@ -429,9 +429,9 @@ app.get('/api/leaderboard', async (req, res) => {
         COUNT(DISTINCT prediction_id) AS total_predictions,
         COUNT(DISTINCT CASE WHEN user_outcome::int = resolved_outcome::int AND resolved_outcome IS NOT NULL THEN prediction_id END) AS correct_predictions,
         COUNT(*) AS total_trades,
-        SUM(CASE WHEN resolved_outcome IS NOT NULL AND (CASE WHEN user_outcome::int = resolved_outcome::int THEN shares ELSE 0 END) > amount THEN 1 ELSE 0 END) AS profitable_trades,
-        SUM(CASE WHEN resolved_outcome IS NOT NULL THEN (CASE WHEN user_outcome::int = resolved_outcome::int THEN shares ELSE 0 END) - amount ELSE 0 END) AS total_pnl,
-        SUM(amount) AS total_volume
+        SUM(CASE WHEN resolved_outcome IS NOT NULL AND (CASE WHEN user_outcome::int = resolved_outcome::int THEN shares::numeric ELSE 0 END) > amount::numeric THEN 1 ELSE 0 END) AS profitable_trades,
+        SUM(CASE WHEN resolved_outcome IS NOT NULL THEN (CASE WHEN user_outcome::int = resolved_outcome::int THEN shares::numeric ELSE 0 END) - amount::numeric ELSE 0 END) AS total_pnl,
+        SUM(amount::numeric) AS total_volume
       FROM trades
       GROUP BY user_address
       ORDER BY total_pnl DESC
