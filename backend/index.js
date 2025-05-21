@@ -713,6 +713,34 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+// --- Frame endpoint for a prediction market ---
+app.get('/frame/:marketId', async (req, res) => {
+  const { marketId } = req.params;
+  // TODO: Fetch real market data from your DB
+  const question = "Will ETH reach $5k by 2025?"; // Replace with real data
+  const imageUrl = `https://ragenodes.site/og-image/${marketId}.png`; // Optional: dynamic OG image
+
+  res.set('Content-Type', 'text/html');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta property="og:title" content="Prediction Market" />
+        <meta property="og:description" content="${question}" />
+        <meta property="og:image" content="${imageUrl}" />
+        <meta property="fc:frame" content="vNext" />
+        <meta property="fc:frame:image" content="${imageUrl}" />
+        <meta property="fc:frame:button:1" content="Vote YES" />
+        <meta property="fc:frame:button:2" content="Vote NO" />
+        <meta property="fc:frame:post_url" content="https://ragenodes.site/api/frame-action/${marketId}" />
+      </head>
+      <body>
+        <h1>Prediction Market Frame</h1>
+      </body>
+    </html>
+  `);
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
