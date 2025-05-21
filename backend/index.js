@@ -353,7 +353,8 @@ function listenToMarket(marketAddress) {
         const { resolved, outcome } = rows[0];
         if (resolved) {
           // Update trades with resolved outcome
-          await db.query('UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2', [outcome, marketAddress]);
+          const resolvedOutcomeInt = typeof outcome === 'boolean' ? (outcome ? 1 : 0) : outcome;
+          await db.query('UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2', [resolvedOutcomeInt, marketAddress]);
           // Clean up listeners for resolved market
           contractForEvents.removeListener('Trade', tradeListener);
           contractForEvents.removeListener('MarketResolved', resolvedListener);
