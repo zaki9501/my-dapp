@@ -22,7 +22,6 @@ const db = new Pool({
 db.on('error', (err, client) => {
   console.error('Database pool error:', err.stack);
   client.release();
-  // Attempt to reconnect by creating a new pool
   setTimeout(async () => {
     try {
       await db.connect();
@@ -47,39 +46,71 @@ async function ensureDbConnection() {
 // --- Provider Setup with Reconnection Logic ---
 let wsProvider;
 let httpProvider;
+let factory;
+let multicall;
 
-function initializeProviders() {
-  wsProvider = new ethers.WebSocketProvider(process.env.WS_RPC_URL);
+// Function to initialize WebSocketProvider with reconnection
+async function initializeWsProvider() {
+  try {
+    wsProvider = new ethers.WebSocketProvider(process.env.WS_RPC_URL);
+    // Test the provider by fetching the block number
+    await wsProvider.getBlockNumber();
+    console.log('WebSocket provider initialized successfully');
+    return true;
+  } catch (err) {
+    console.error('Failed to initialize WebSocket provider:', err.message);
+    wsProvider?.destroy();
+    return false;
+  }
+}
+
+// Function to initialize providers with reconnection loop
+async function initializeProviders() {
   httpProvider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 
-  // WebSocket reconnection logic
-  wsProvider._websocket.on('close', () => {
-    console.log('WebSocket disconnected, attempting to reconnect...');
-    cleanupMarketListeners(); // Clean up listeners before reconnect
-    setTimeout(() => {
-      initializeProviders();
-      reinitializeContracts();
-      listenToExistingMarkets(); // Reattach listeners after reconnect
-    }, 5000); // Retry after 5 seconds
-  });
-  wsProvider._websocket.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
+  let attempts = 0;
+  const maxAttempts = 5;
+  while (attempts < maxAttempts) {
+    attempts++;
+    const success = await initializeWsProvider();
+    if (success) break;
+    console.log(`Retrying WebSocket provider initialization (attempt ${attempts}/${maxAttempts})...`);
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retrying
+  }
 
-  console.log('Providers initialized');
+  if (!wsProvider) {
+    console.error('Failed to initialize WebSocket provider after max attempts, falling back to HTTP provider');
+    wsProvider = httpProvider; // Fallback to HTTP provider for events
+  }
 }
-initializeProviders();
 
-// Monitor WebSocket connection status
-setInterval(() => {
-  console.log('WebSocket connection alive:', wsProvider._websocket.readyState === 1);
-}, 60 * 1000); // Log every minute
+// Monitor WebSocket provider health and reconnect if needed
+async function monitorWsProvider() {
+  try {
+    await wsProvider.getBlockNumber();
+    console.log('WebSocket provider is healthy');
+  } catch (err) {
+    console.error('WebSocket provider disconnected:', err.message);
+    cleanupMarketListeners();
+    await initializeProviders();
+    reinitializeContracts();
+    await listenToExistingMarkets();
+  }
+}
+
+// Run provider health check every 5 minutes
+setInterval(monitorWsProvider, 5 * 60 * 1000);
+
+// Initialize providers on startup
+(async () => {
+  await initializeProviders();
+  reinitializeContracts();
+  await listenToExistingMarkets();
+})();
 
 // --- Contract Setup ---
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
 const marketAbi = JSON.parse(process.env.CONTRACT_MARKET_ABI);
-
-let factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, wsProvider);
 
 // Multicall3 ABI
 const multicall3Abi = [
@@ -105,13 +136,10 @@ const multicall3Abi = [
   },
 ];
 
-let multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, httpProvider);
-
-// Reinitialize contracts after WebSocket reconnect
 function reinitializeContracts() {
   factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, wsProvider);
   multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, httpProvider);
-  console.log('Contracts reinitialized after WebSocket reconnect');
+  console.log('Contracts reinitialized');
 }
 
 // --- Batch Index Market Metadata using Multicall3 ---
@@ -317,7 +345,7 @@ function cleanupMarketListeners() {
   marketListeners.clear();
 }
 
-// Periodic cleanup of inactive markets (e.g., resolved or old markets)
+// Periodic cleanup of inactive markets
 setInterval(async () => {
   try {
     const { rows } = await db.query(
@@ -395,6 +423,8 @@ function listenToMarket(marketAddress) {
       console.log(`Processed Trade event for market ${marketAddress}`);
     } catch (err) {
       console.error('Error handling Trade event:', err.message, err.stack);
+      // If event processing fails, it might indicate a provider issue
+      monitorWsProvider();
     }
   };
 
@@ -415,6 +445,7 @@ function listenToMarket(marketAddress) {
       }
     } catch (err) {
       console.error('Error handling MarketResolved event:', err.message, err.stack);
+      monitorWsProvider();
     }
   };
 
@@ -436,9 +467,9 @@ async function listenToExistingMarkets() {
     }
   } catch (err) {
     console.error('Error fetching existing markets:', err.message, err.stack);
+    monitorWsProvider(); // Trigger provider check on failure
   }
 }
-listenToExistingMarkets();
 
 // --- API Endpoints ---
 app.get('/api/market-trades/:marketAddress', async (req, res) => {
@@ -693,7 +724,7 @@ process.on('SIGTERM', async () => {
   console.log('Received SIGTERM, shutting down...');
   cleanupMarketListeners();
   await db.end();
-  wsProvider.destroy();
+  wsProvider?.destroy();
   process.exit(0);
 });
 
@@ -702,7 +733,7 @@ async function fetchNeynarProfile(fid, apiKey, cache) {
   if (cache[fid]) return cache[fid];
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
 
   try {
     const res = await fetch(`https://api.neynar.com/v2/farcaster/user?fid=${fid}`, {
