@@ -33,31 +33,23 @@ async function ensureDbConnection() {
   }
 }
 
-// --- WebSocket Provider with Reconnection Logic ---
+// --- Provider Setup (HTTP) ---
 let provider;
 function initializeProvider() {
-  provider = new ethers.WebSocketProvider(process.env.RPC_URL);
-  provider.on('close', () => {
-    console.log('WebSocket disconnected, attempting to reconnect...');
-    // Clean up existing listeners before reconnecting
-    cleanupMarketListeners();
-    setTimeout(() => {
-      initializeProvider();
-      reinitializeContracts();
-      listenToExistingMarkets(); // Reattach listeners after reconnect
-    }, 5000); // Retry after 5 seconds
-  });
-  provider.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
-  console.log('WebSocket provider initialized');
+  provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+  console.log('HTTP provider initialized');
 }
 initializeProvider();
 
-// Periodically log WebSocket connection status for debugging
-setInterval(() => {
-  console.log('WebSocket connection alive:', provider._websocket.readyState === 1);
-}, 60 * 1000); // Log every minute
+// Optionally, check connection health
+setInterval(async () => {
+  try {
+    await provider.getBlockNumber();
+    console.log('HTTP provider connection alive: true');
+  } catch (err) {
+    console.log('HTTP provider connection alive: false', err.message);
+  }
+}, 60 * 1000);
 
 // --- Contract Setup ---
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
