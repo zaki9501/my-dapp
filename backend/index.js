@@ -4,59 +4,104 @@ import { Pool } from 'pg';
 import express from 'express';
 import cors from 'cors';
 
-// Periodic outbound request to keep Railway service awake
-setInterval(() => {
-  fetch('https://api.coingecko.com/api/v3/ping').catch(() => {});
-}, 5 * 60 * 1000); // every 5 minutes
-
+// Initialize Express app
 const app = express();
 app.use(cors());
 
-const db = new Pool({ connectionString: process.env.DATABASE_URL });
-const provider = new ethers.WebSocketProvider(process.env.RPC_URL);
+// --- Database Pool Setup ---
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
+  connectionTimeoutMillis: 5000, // Timeout connection attempts after 5 seconds
+  max: 10, // Max number of connections in the pool
+});
 
+// Handle database pool errors
+db.on('error', (err, client) => {
+  console.error('Database pool error:', err.stack);
+  client.release();
+});
+
+// Function to ensure database connection is alive before queries
+async function ensureDbConnection() {
+  try {
+    await db.query('SELECT 1');
+    console.log('Database connection check successful');
+  } catch (err) {
+    console.error('Database connection check failed:', err);
+    throw err;
+  }
+}
+
+// --- WebSocket Provider with Reconnection Logic ---
+let provider;
+function initializeProvider() {
+  provider = new ethers.WebSocketProvider(process.env.RPC_URL);
+  provider._websocket.on('close', () => {
+    console.log('WebSocket disconnected, attempting to reconnect...');
+    // Clean up existing listeners before reconnecting
+    cleanupMarketListeners();
+    setTimeout(() => {
+      initializeProvider();
+      reinitializeContracts();
+      listenToExistingMarkets(); // Reattach listeners after reconnect
+    }, 5000); // Retry after 5 seconds
+  });
+  provider._websocket.on('error', (err) => {
+    console.error('WebSocket error:', err);
+  });
+  console.log('WebSocket provider initialized');
+}
+initializeProvider();
+
+// Periodically log WebSocket connection status for debugging
+setInterval(() => {
+  console.log('WebSocket connection alive:', provider._websocket.readyState === 1);
+}, 60 * 1000); // Log every minute
+
+// --- Contract Setup ---
 const factoryAbi = JSON.parse(process.env.CONTRACT_FACTORY_ABI);
 const marketAbi = JSON.parse(process.env.CONTRACT_MARKET_ABI);
 
-const factory = new ethers.Contract(
-  process.env.FACTORY_ADDRESS,
-  factoryAbi,
-  provider
-);
+let factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, provider);
 
-// --- Multicall3 ABI ---
+// Multicall3 ABI
 const multicall3Abi = [
   {
-    "inputs": [
+    inputs: [
       {
-        "components": [
-          { "internalType": "address", "name": "target", "type": "address" },
-          { "internalType": "bytes", "name": "callData", "type": "bytes" }
+        components: [
+          { internalType: 'address', name: 'target', type: 'address' },
+          { internalType: 'bytes', name: 'callData', type: 'bytes' },
         ],
-        "internalType": "struct Multicall3.Call[]",
-        "name": "calls",
-        "type": "tuple[]"
-      }
+        internalType: 'struct Multicall3.Call[]',
+        name: 'calls',
+        type: 'tuple[]',
+      },
     ],
-    "name": "aggregate",
-    "outputs": [
-      { "internalType": "uint256", "name": "blockNumber", "type": "uint256" },
-      { "internalType": "bytes[]", "name": "returnData", "type": "bytes[]" }
+    name: 'aggregate',
+    outputs: [
+      { internalType: 'uint256', name: 'blockNumber', type: 'uint256' },
+      { internalType: 'bytes[]', name: 'returnData', type: 'bytes[]' },
     ],
-    "stateMutability": "view",
-    "type": "function"
-  }
+    stateMutability: 'view',
+    type: 'function',
+  },
 ];
+
+let multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, provider);
+
+// Reinitialize contracts after WebSocket reconnect
+function reinitializeContracts() {
+  factory = new ethers.Contract(process.env.FACTORY_ADDRESS, factoryAbi, provider);
+  multicall = new ethers.Contract('0xcA11bde05977b3631167028862bE2a173976CA11', multicall3Abi, provider);
+  console.log('Contracts reinitialized after WebSocket reconnect');
+}
 
 // --- Batch Index Market Metadata using Multicall3 ---
 async function batchIndexMarketMetadata(marketAddresses) {
   if (!marketAddresses.length) return;
   const iface = new ethers.Interface(marketAbi);
-  const multicall = new ethers.Contract(
-    '0xcA11bde05977b3631167028862bE2a173976CA11',
-    multicall3Abi,
-    provider
-  );
 
   // Prepare all calls for all markets
   const calls = [];
@@ -79,80 +124,86 @@ async function batchIndexMarketMetadata(marketAddresses) {
   }
 
   // Call multicall3
-  const [, returnData] = await multicall.aggregate(calls);
+  try {
+    const [, returnData] = await multicall.aggregate(calls);
 
-  // Parse results and update DB
-  for (let i = 0; i < marketAddresses.length; i++) {
-    const base = i * 13;
-    try {
-      const [
-        predictionId,
-        question,
-        description,
-        category,
-        rule,
-        status,
-        resolutionDate,
-        resolved,
-        winningOutcome,
-        yesPool,
-        noPool,
-        volume,
-        tradesCount
-      ] = [
-        iface.decodeFunctionResult('predictionId', returnData[base])[0],
-        iface.decodeFunctionResult('question', returnData[base + 1])[0],
-        iface.decodeFunctionResult('description', returnData[base + 2])[0],
-        iface.decodeFunctionResult('category', returnData[base + 3])[0],
-        iface.decodeFunctionResult('rule', returnData[base + 4])[0],
-        iface.decodeFunctionResult('status', returnData[base + 5])[0],
-        iface.decodeFunctionResult('resolutionDate', returnData[base + 6])[0],
-        iface.decodeFunctionResult('resolved', returnData[base + 7])[0],
-        iface.decodeFunctionResult('winningOutcome', returnData[base + 8])[0],
-        iface.decodeFunctionResult('yesPool', returnData[base + 9])[0],
-        iface.decodeFunctionResult('noPool', returnData[base + 10])[0],
-        iface.decodeFunctionResult('volume', returnData[base + 11])[0],
-        iface.decodeFunctionResult('tradesCount', returnData[base + 12])[0]
-      ];
-
-      await db.query(
-        `INSERT INTO markets (
-          market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14)
-        ON CONFLICT (market_address) DO UPDATE SET
-          prediction_id = EXCLUDED.prediction_id,
-          question = EXCLUDED.question,
-          description = EXCLUDED.description,
-          category = EXCLUDED.category,
-          rule = EXCLUDED.rule,
-          status = EXCLUDED.status,
-          resolution_date = EXCLUDED.resolution_date,
-          resolved = EXCLUDED.resolved,
-          outcome = EXCLUDED.outcome,
-          yes_pool = EXCLUDED.yes_pool,
-          no_pool = EXCLUDED.no_pool,
-          volume = EXCLUDED.volume,
-          trades_count = EXCLUDED.trades_count`,
-        [
-          marketAddresses[i],
+    // Parse results and update DB
+    for (let i = 0; i < marketAddresses.length; i++) {
+      const base = i * 13;
+      try {
+        const [
           predictionId,
           question,
           description,
           category,
           rule,
           status,
-          Number(resolutionDate),
+          resolutionDate,
           resolved,
           winningOutcome,
-          ethers.formatEther(yesPool),
-          ethers.formatEther(noPool),
-          ethers.formatEther(volume),
-          Number(tradesCount)
-        ]
-      );
-    } catch (err) {
-      console.error('Error parsing multicall result for', marketAddresses[i], err);
+          yesPool,
+          noPool,
+          volume,
+          tradesCount,
+        ] = [
+          iface.decodeFunctionResult('predictionId', returnData[base])[0],
+          iface.decodeFunctionResult('question', returnData[base + 1])[0],
+          iface.decodeFunctionResult('description', returnData[base + 2])[0],
+          iface.decodeFunctionResult('category', returnData[base + 3])[0],
+          iface.decodeFunctionResult('rule', returnData[base + 4])[0],
+          iface.decodeFunctionResult('status', returnData[base + 5])[0],
+          iface.decodeFunctionResult('resolutionDate', returnData[base + 6])[0],
+          iface.decodeFunctionResult('resolved', returnData[base + 7])[0],
+          iface.decodeFunctionResult('winningOutcome', returnData[base + 8])[0],
+          iface.decodeFunctionResult('yesPool', returnData[base + 9])[0],
+          iface.decodeFunctionResult('noPool', returnData[base + 10])[0],
+          iface.decodeFunctionResult('volume', returnData[base + 11])[0],
+          iface.decodeFunctionResult('tradesCount', returnData[base + 12])[0],
+        ];
+
+        await ensureDbConnection();
+        await db.query(
+          `INSERT INTO markets (
+            market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14)
+          ON CONFLICT (market_address) DO UPDATE SET
+            prediction_id = EXCLUDED.prediction_id,
+            question = EXCLUDED.question,
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            rule = EXCLUDED.rule,
+            status = EXCLUDED.status,
+            resolution_date = EXCLUDED.resolution_date,
+            resolved = EXCLUDED.resolved,
+            outcome = EXCLUDED.outcome,
+            yes_pool = EXCLUDED.yes_pool,
+            no_pool = EXCLUDED.no_pool,
+            volume = EXCLUDED.volume,
+            trades_count = EXCLUDED.trades_count`,
+          [
+            marketAddresses[i],
+            predictionId,
+            question,
+            description,
+            category,
+            rule,
+            status,
+            Number(resolutionDate),
+            resolved,
+            winningOutcome,
+            ethers.formatEther(yesPool),
+            ethers.formatEther(noPool),
+            ethers.formatEther(volume),
+            Number(tradesCount),
+          ]
+        );
+        console.log(`Batch indexed market ${marketAddresses[i]}: predictionId=${predictionId}`);
+      } catch (err) {
+        console.error('Error parsing multicall result for', marketAddresses[i], err.message, err.stack);
+      }
     }
+  } catch (err) {
+    console.error('Error in batchIndexMarketMetadata:', err.message, err.stack);
   }
 }
 
@@ -173,7 +224,7 @@ async function indexMarketMetadata(marketAddress) {
       yesPool,
       noPool,
       volume,
-      tradesCount
+      tradesCount,
     ] = await Promise.all([
       market.predictionId(),
       market.question(),
@@ -187,8 +238,11 @@ async function indexMarketMetadata(marketAddress) {
       market.yesPool(),
       market.noPool(),
       market.volume(),
-      market.tradesCount()
+      market.tradesCount(),
     ]);
+    console.log(`Indexing market ${marketAddress}: predictionId=${predictionId}, resolved=${resolved}`);
+
+    await ensureDbConnection();
     await db.query(
       `INSERT INTO markets (
         market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count
@@ -221,12 +275,12 @@ async function indexMarketMetadata(marketAddress) {
         ethers.formatEther(yesPool),
         ethers.formatEther(noPool),
         ethers.formatEther(volume),
-        Number(tradesCount)
+        Number(tradesCount),
       ]
     );
     console.log('Indexed/updated market metadata for', marketAddress);
   } catch (err) {
-    console.error('Error indexing market metadata:', err);
+    console.error(`Error indexing market metadata for ${marketAddress}:`, err.message, err.stack);
   }
 }
 
@@ -237,24 +291,23 @@ factory.on('MarketCreated', async (marketAddress, creator, predictionId, event) 
   listenToMarket(marketAddress);
 });
 
-// --- Listen to all existing markets on startup ---
-async function listenToExistingMarkets() {
-  try {
-    const marketAddresses = await factory.getMarkets();
-    await batchIndexMarketMetadata(marketAddresses);
-    for (const marketAddress of marketAddresses) {
-      listenToMarket(marketAddress);
-    }
-  } catch (err) {
-    console.error('Error fetching existing markets:', err);
-  }
-}
-listenToExistingMarkets();
+// --- Manage Market Event Listeners ---
+const marketListeners = new Map();
 
-// --- Helper: Listen to Trade events on a Market contract ---
+function cleanupMarketListeners() {
+  marketListeners.forEach(({ tradeListener, resolvedListener }, marketAddress) => {
+    const market = new ethers.Contract(marketAddress, marketAbi, provider);
+    market.removeListener('Trade', tradeListener);
+    market.removeListener('MarketResolved', resolvedListener);
+    console.log('Cleaned up listeners for market:', marketAddress);
+  });
+  marketListeners.clear();
+}
+
 function listenToMarket(marketAddress) {
   const market = new ethers.Contract(marketAddress, marketAbi, provider);
-  market.on('Trade', async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
+
+  const tradeListener = async (user, outcome, amount, shares, creatorFee, platformFee, event) => {
     try {
       const { transactionHash, blockNumber, address: marketAddress } = event.log;
       const block = await provider.getBlock(blockNumber);
@@ -283,6 +336,7 @@ function listenToMarket(marketAddress) {
         resolvedOutcome = null;
       }
 
+      await ensureDbConnection();
       await db.query(
         `INSERT INTO trades (tx_hash, block_number, user_address, market_address, outcome, amount, shares, creator_fee, platform_fee, timestamp, user_fid, prediction_id, resolved_outcome, user_outcome)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
@@ -301,42 +355,69 @@ function listenToMarket(marketAddress) {
           userFid,
           predictionId,
           resolvedOutcome,
-          outcome
+          outcome,
         ]
       );
       await indexMarketMetadata(marketAddress);
+      console.log(`Processed Trade event for market ${marketAddress}`);
     } catch (err) {
-      console.error('Error handling Trade event:', err);
+      console.error('Error handling Trade event:', err.message, err.stack);
     }
-  });
-  market.on('MarketResolved', async () => {
-    await indexMarketMetadata(marketAddress);
-    // Update all trades for this market with the new outcome
-    const { rows } = await db.query(
-      'SELECT outcome FROM markets WHERE market_address = $1',
-      [marketAddress]
-    );
-    if (rows.length > 0) {
-      const outcome = rows[0].outcome;
-      await db.query(
-        'UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2',
-        [outcome, marketAddress]
-      );
+  };
+
+  const resolvedListener = async () => {
+    try {
+      await indexMarketMetadata(marketAddress);
+      const { rows } = await db.query('SELECT resolved, outcome FROM markets WHERE market_address = $1', [marketAddress]);
+      if (rows.length > 0) {
+        const { resolved, outcome } = rows[0];
+        if (resolved) {
+          // Update trades with resolved outcome
+          await db.query('UPDATE trades SET resolved_outcome = $1 WHERE market_address = $2', [outcome, marketAddress]);
+          // Clean up listeners for resolved market
+          market.removeListener('Trade', tradeListener);
+          market.removeListener('MarketResolved', resolvedListener);
+          marketListeners.delete(marketAddress);
+          console.log('Cleaned up listeners for resolved market:', marketAddress);
+        }
+      }
+    } catch (err) {
+      console.error('Error handling MarketResolved event:', err.message, err.stack);
     }
-  });
+  };
+
+  market.on('Trade', tradeListener);
+  market.on('MarketResolved', resolvedListener);
+
+  marketListeners.set(marketAddress, { tradeListener, resolvedListener });
   console.log('Listening for trades and resolution on market:', marketAddress);
 }
 
-// --- API Endpoints (unchanged) ---
+// --- Listen to Existing Markets on Startup ---
+async function listenToExistingMarkets() {
+  try {
+    const marketAddresses = await factory.getMarkets();
+    console.log(`Found ${marketAddresses.length} existing markets`);
+    await batchIndexMarketMetadata(marketAddresses);
+    for (const marketAddress of marketAddresses) {
+      listenToMarket(marketAddress);
+    }
+  } catch (err) {
+    console.error('Error fetching existing markets:', err.message, err.stack);
+  }
+}
+listenToExistingMarkets();
 
+// --- API Endpoints ---
 app.get('/api/market-trades/:marketAddress', async (req, res) => {
   const { marketAddress } = req.params;
   try {
+    await ensureDbConnection();
     const { rows } = await db.query(
       'SELECT * FROM trades WHERE market_address = $1 ORDER BY timestamp ASC',
       [marketAddress.toLowerCase()]
     );
-    const formatted = rows.map(row => ({
+    const formatted = rows.map((row) => ({
       ...row,
       amount_mon: ethers.formatEther(row.amount),
       shares_mon: ethers.formatEther(row.shares),
@@ -345,19 +426,20 @@ app.get('/api/market-trades/:marketAddress', async (req, res) => {
     }));
     res.json(formatted);
   } catch (err) {
-    console.error('API error:', err);
+    console.error('API error /market-trades:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.get('/api/live-markets', async (req, res) => {
   try {
+    await ensureDbConnection();
     const { rows } = await db.query(
       "SELECT * FROM markets WHERE status = 'live' AND resolved = false ORDER BY resolution_date ASC LIMIT 100"
     );
     res.json(rows);
   } catch (err) {
-    console.error('API error:', err);
+    console.error('API error /live-markets:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -365,11 +447,12 @@ app.get('/api/live-markets', async (req, res) => {
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
+    await ensureDbConnection();
     const { rows } = await db.query(
       'SELECT * FROM trades WHERE LOWER(user_address) = $1 ORDER BY timestamp DESC LIMIT 100',
       [address.toLowerCase()]
     );
-    const formatted = rows.map(row => ({
+    const formatted = rows.map((row) => ({
       ...row,
       amount_mon: ethers.formatEther(row.amount),
       shares_mon: ethers.formatEther(row.shares),
@@ -377,21 +460,22 @@ app.get('/api/user-trades/:address', async (req, res) => {
       platform_fee_mon: ethers.formatEther(row.platform_fee),
       prediction_id: row.prediction_id,
       resolved_outcome: row.resolved_outcome,
-      user_outcome: row.user_outcome !== undefined ? row.user_outcome : row.outcome
+      user_outcome: row.user_outcome !== undefined ? row.user_outcome : row.outcome,
     }));
     res.json(formatted);
   } catch (err) {
-    console.error('API error:', err);
+    console.error('API error /user-trades:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.get('/api/resolved-markets', async (req, res) => {
   try {
+    await ensureDbConnection();
     const { rows } = await db.query(
-      "SELECT * FROM markets WHERE resolved = true ORDER BY resolution_date DESC LIMIT 100"
+      'SELECT * FROM markets WHERE resolved = true ORDER BY resolution_date DESC LIMIT 100'
     );
-    const formatted = rows.map(m => {
+    const formatted = rows.map((m) => {
       const yesPool = Number(m.yes_pool);
       const noPool = Number(m.no_pool);
       const totalPool = yesPool + noPool;
@@ -415,14 +499,14 @@ app.get('/api/resolved-markets', async (req, res) => {
     });
     res.json(formatted);
   } catch (err) {
-    console.error('API error:', err);
+    console.error('API error /resolved-markets:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.get('/api/leaderboard', async (req, res) => {
   try {
-    // Aggregate stats per user
+    await ensureDbConnection();
     const { rows } = await db.query(`
       SELECT
         user_address,
@@ -439,7 +523,7 @@ app.get('/api/leaderboard', async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    console.error('Leaderboard API error:', err);
+    console.error('Leaderboard API error:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -474,13 +558,24 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-app.listen(process.env.PORT || 3001, () => {
-  console.log('API running on port', process.env.PORT || 3001);
+// Start the server
+const port = process.env.PORT || 3001;
+app.listen(port, () => {
+  console.log('API running on port', port);
 });
 
-process.on('uncaughtException', err => {
-  console.error('Uncaught Exception:', err);
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message, err.stack);
 });
-process.on('unhandledRejection', err => {
-  console.error('Unhandled Rejection:', err);
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err.message, err.stack);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM, shutting down...');
+  cleanupMarketListeners();
+  await db.end();
+  process.exit(0);
 });
