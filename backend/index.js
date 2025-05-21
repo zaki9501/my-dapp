@@ -528,6 +528,19 @@ app.get('/api/activity', async (req, res) => {
   }
 });
 
+app.get('/api/expired-markets', async (req, res) => {
+  try {
+    await ensureDbConnection();
+    const { rows } = await db.query(
+      "SELECT * FROM markets WHERE resolved = false AND resolution_date <= NOW() ORDER BY resolution_date ASC"
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('API error /expired-markets:', err.message, err.stack);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Health and root endpoints
 app.head('/', (req, res) => {
   res.status(200).end();
