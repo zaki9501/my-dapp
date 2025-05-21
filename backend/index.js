@@ -444,6 +444,25 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
+// Add this after your other API endpoints
+app.get('/api/activity', async (req, res) => {
+  // Accept comma-separated FIDs as a query param
+  const fids = req.query.fids ? req.query.fids.split(',').map(fid => fid.trim()) : [];
+  if (!fids.length) return res.json([]);
+
+  try {
+    // Query recent trades for these FIDs (adjust table/column names as needed)
+    const { rows } = await db.query(
+      `SELECT * FROM trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
+      [fids]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('API error in /api/activity:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Health and root endpoints
 app.head('/', (req, res) => {
   res.status(200).end();
