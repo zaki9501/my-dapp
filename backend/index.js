@@ -37,7 +37,7 @@ async function ensureDbConnection() {
 let provider;
 function initializeProvider() {
   provider = new ethers.WebSocketProvider(process.env.RPC_URL);
-  provider._websocket.on('close', () => {
+  provider.on('close', () => {
     console.log('WebSocket disconnected, attempting to reconnect...');
     // Clean up existing listeners before reconnecting
     cleanupMarketListeners();
@@ -47,7 +47,7 @@ function initializeProvider() {
       listenToExistingMarkets(); // Reattach listeners after reconnect
     }, 5000); // Retry after 5 seconds
   });
-  provider._websocket.on('error', (err) => {
+  provider.on('error', (err) => {
     console.error('WebSocket error:', err);
   });
   console.log('WebSocket provider initialized');
