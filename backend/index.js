@@ -772,7 +772,7 @@ app.get('/frame/:marketId', async (req, res) => {
 });
 
 app.get('/og-image/:predictionId.png', (req, res) => {
-  const imagePath = './public/monad-bazzar-og.png';
+  const imagePath = './public/preview.png';
   if (fs.existsSync(imagePath)) {
     res.set('Content-Type', 'image/png');
     res.send(fs.readFileSync(imagePath));
