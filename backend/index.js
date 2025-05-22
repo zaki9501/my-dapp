@@ -847,12 +847,24 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
           ]
         }
       },
-      { width: 1200, height: 630 }
+      {
+        width: 1200,
+        height: 630,
+        fonts: [
+          {
+            name: 'Inter',
+            data: await fetch('https://rsms.me/inter/font-files/Inter-Regular.woff').then(res => res.arrayBuffer()),
+            weight: 400,
+            style: 'normal',
+          },
+        ],
+      }
     );
 
     // Convert SVG to PNG
     svg2img(svg, { width: 1200, height: 630 }, (error, buffer) => {
       if (error) {
+        console.error('OG image generation error:', error);
         res.status(500).send('Failed to generate image');
       } else {
         res.set('Content-Type', 'image/png');
@@ -860,6 +872,7 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
       }
     });
   } catch (err) {
+    console.error('OG image generation error:', err);
     res.status(500).send('Internal server error');
   }
 });
