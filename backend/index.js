@@ -748,7 +748,7 @@ app.get('/frame/:marketId', async (req, res) => {
   const market = rows[0];
   const question = market?.question || "Prediction Market";
   const imageUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/og-image/${marketId}.png`;
-  const tradeUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/prediction/${marketId}`; // or your mini app route
+  const tradeUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/prediction/${marketId}`;
 
   res.set('Content-Type', 'text/html');
   res.send(`
@@ -771,100 +771,13 @@ app.get('/frame/:marketId', async (req, res) => {
   `);
 });
 
-app.get('/og-image/:predictionId.png', async (req, res) => {
-  const { predictionId } = req.params;
-  try {
-    await ensureDbConnection();
-    const { rows } = await db.query('SELECT * FROM markets WHERE prediction_id = $1 LIMIT 1', [predictionId]);
-    const market = rows[0];
-    const question = market?.question || 'Prediction Market';
-    const category = market?.category || '';
-    const endDate = market?.resolution_date ? new Date(market.resolution_date).toLocaleDateString() : '';
-
-    // Generate SVG using satori
-    const svg = await satori(
-      {
-        type: 'div',
-        props: {
-          style: {
-            width: 1200,
-            height: 630,
-            background: '#fff',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            fontFamily: 'sans-serif'
-          },
-          children: [
-            {
-              type: 'div',
-              props: {
-                style: {
-                  fontSize: 40,
-                  color: '#7c3aed',
-                  marginBottom: 32,
-                  textAlign: 'center',
-                  maxWidth: 1000
-                },
-                children: question
-              }
-            },
-            {
-              type: 'div',
-              props: {
-                style: {
-                  fontSize: 24,
-                  color: '#666',
-                  marginBottom: 24
-                },
-                children: `${category} ${endDate ? `| Ends: ${endDate}` : ''}`
-              }
-            },
-            {
-              type: 'div',
-              props: {
-                style: { marginTop: 40 },
-                children: {
-                  type: 'div',
-                  props: {
-                    style: {
-                      fontSize: 32,
-                      background: '#7c3aed',
-                      color: '#fff',
-                      borderRadius: 12,
-                      padding: '16px 48px',
-                      display: 'inline-block'
-                    },
-                    children: 'Trade Now'
-                  }
-                }
-              }
-            }
-          ]
-        }
-      },
-      { width: 1200, height: 630 }
-    );
-
-    // Convert SVG to PNG
-    svg2img(svg, { width: 1200, height: 630 }, (error, buffer) => {
-      if (error) {
-        res.status(500).send('Failed to generate image');
-      } else {
-        res.set('Content-Type', 'image/png');
-        res.send(buffer);
-      }
-    });
-  } catch (err) {
-    // Fallback: serve a default image
-    const defaultImagePath = './public/default-og.png';
-    if (fs.existsSync(defaultImagePath)) {
-      res.set('Content-Type', 'image/png');
-      res.send(fs.readFileSync(defaultImagePath));
-    } else {
-      res.status(404).send('Prediction not found');
-    }
+app.get('/og-image/:predictionId.png', (req, res) => {
+  const imagePath = './public/monad-bazzar-og.png';
+  if (fs.existsSync(imagePath)) {
+    res.set('Content-Type', 'image/png');
+    res.send(fs.readFileSync(imagePath));
+  } else {
+    res.status(404).send('OG image not found');
   }
 });
 
