@@ -718,7 +718,7 @@ app.get('/frame/:marketId', async (req, res) => {
   const { marketId } = req.params;
   // TODO: Fetch real market data from your DB
   const question = "Will ETH reach $5k by 2025?"; // Replace with real data
-  const imageUrl = `https://ragenodes.site/og-image/${marketId}.png`; // Optional: dynamic OG image
+  const imageUrl = `https://yourdomain.com/og-image/${marketId}.png`; // Optional: dynamic OG image
 
   res.set('Content-Type', 'text/html');
   res.send(`
@@ -732,7 +732,7 @@ app.get('/frame/:marketId', async (req, res) => {
         <meta property="fc:frame:image" content="${imageUrl}" />
         <meta property="fc:frame:button:1" content="Vote YES" />
         <meta property="fc:frame:button:2" content="Vote NO" />
-        <meta property="fc:frame:post_url" content="https://ragenodes.site/api/frame-action/${marketId}" />
+        <meta property="fc:frame:post_url" content="https://yourdomain.com/api/frame-action/${marketId}" />
       </head>
       <body>
         <h1>Prediction Market Frame</h1>
