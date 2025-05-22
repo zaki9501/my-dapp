@@ -742,9 +742,13 @@ app.get('/health', (req, res) => {
 // --- Frame endpoint for a prediction market ---
 app.get('/frame/:marketId', async (req, res) => {
   const { marketId } = req.params;
-  // TODO: Fetch real market data from your DB
-  const question = "Will ETH reach $5k by 2025?"; // Replace with real data
-  const imageUrl = `https://yourdomain.com/og-image/${marketId}.png`; // Optional: dynamic OG image
+  // Fetch real market data from your DB
+  await ensureDbConnection();
+  const { rows } = await db.query('SELECT * FROM markets WHERE prediction_id = $1 LIMIT 1', [marketId]);
+  const market = rows[0];
+  const question = market?.question || "Prediction Market";
+  const imageUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/og-image/${marketId}.png`;
+  const tradeUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/prediction/${marketId}`; // or your mini app route
 
   res.set('Content-Type', 'text/html');
   res.send(`
@@ -756,9 +760,9 @@ app.get('/frame/:marketId', async (req, res) => {
         <meta property="og:image" content="${imageUrl}" />
         <meta property="fc:frame" content="vNext" />
         <meta property="fc:frame:image" content="${imageUrl}" />
-        <meta property="fc:frame:button:1" content="Vote YES" />
-        <meta property="fc:frame:button:2" content="Vote NO" />
-        <meta property="fc:frame:post_url" content="https://yourdomain.com/api/frame-action/${marketId}" />
+        <meta property="fc:frame:button:1" content="Trade" />
+        <meta property="fc:frame:button:1:action" content="link" />
+        <meta property="fc:frame:button:1:target" content="${tradeUrl}" />
       </head>
       <body>
         <h1>Prediction Market Frame</h1>
