@@ -795,18 +795,19 @@ async function fetchNeynarProfile(fid, apiKey, cache) {
   const timeoutId = setTimeout(() => controller.abort(), 5000);
 
   try {
-    const res = await fetch(`https://api.neynar.com/v2/farcaster/user?fid=${fid}`, {
+    // Use the bulk endpoint for consistency
+    const res = await fetch(`https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`, {
       headers: { 'x-api-key': apiKey },
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
 
     const data = await res.json();
-    if (data && data.result && data.result.user) {
-      const user = data.result.user;
+    if (data && data.users && data.users.length > 0) {
+      const user = data.users[0];
       const profile = {
         username: user.username || '',
-        avatar: user.pfp_url || '',
+        avatar: '', // not used, but you could use user.pfp_url if you want
       };
       cache[fid] = profile;
       return profile;
