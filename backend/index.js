@@ -7,7 +7,6 @@ import fetch from 'node-fetch';
 import satori from 'satori';
 import svg2img from 'svg2img';
 import fs from 'fs';
-import { h } from 'satori/html';
 
 // Initialize Express app
 const app = express();
@@ -780,13 +779,67 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
 
     // Generate SVG using satori
     const svg = await satori(
-      h('div', { style: { width: 1200, height: 630, background: '#fff', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', fontFamily: 'sans-serif' } },
-        h('div', { style: { fontSize: 40, color: '#7c3aed', marginBottom: 32, textAlign: 'center', maxWidth: 1000 } }, question),
-        h('div', { style: { fontSize: 24, color: '#666', marginBottom: 24 } }, `${category} ${endDate && `| Ends: ${endDate}`}`),
-        h('div', { style: { marginTop: 40 } },
-          h('div', { style: { fontSize: 32, background: '#7c3aed', color: '#fff', borderRadius: 12, padding: '16px 48px', display: 'inline-block' } }, 'Trade Now')
-        )
-      ),
+      {
+        type: 'div',
+        props: {
+          style: {
+            width: 1200,
+            height: 630,
+            background: '#fff',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            fontFamily: 'sans-serif'
+          },
+          children: [
+            {
+              type: 'div',
+              props: {
+                style: {
+                  fontSize: 40,
+                  color: '#7c3aed',
+                  marginBottom: 32,
+                  textAlign: 'center',
+                  maxWidth: 1000
+                },
+                children: question
+              }
+            },
+            {
+              type: 'div',
+              props: {
+                style: {
+                  fontSize: 24,
+                  color: '#666',
+                  marginBottom: 24
+                },
+                children: `${category} ${endDate ? `| Ends: ${endDate}` : ''}`
+              }
+            },
+            {
+              type: 'div',
+              props: {
+                style: { marginTop: 40 },
+                children: {
+                  type: 'div',
+                  props: {
+                    style: {
+                      fontSize: 32,
+                      background: '#7c3aed',
+                      color: '#fff',
+                      borderRadius: 12,
+                      padding: '16px 48px',
+                      display: 'inline-block'
+                    },
+                    children: 'Trade Now'
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
       { width: 1200, height: 630 }
     );
 
