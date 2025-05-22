@@ -774,17 +774,22 @@ app.get('/frame/:marketId', async (req, res) => {
 app.get('/og-image/:predictionId.png', async (req, res) => {
   const { predictionId } = req.params;
   try {
+    // Fetch prediction data from DB
     await ensureDbConnection();
     const { rows } = await db.query('SELECT * FROM markets WHERE prediction_id = $1 LIMIT 1', [predictionId]);
     const market = rows[0];
-    if (!market) {
-      return res.status(404).send('Prediction not found');
-    }
-    const question = market.question || 'Prediction Market';
-    const category = market.category || '';
-    const endDate = market.resolution_date ? new Date(market.resolution_date).toLocaleDateString() : '';
+    if (!market) return res.status(404).send('Prediction not found');
 
-    // Generate SVG using satori
+    // Fetch font
+    const fontUrl = 'https://rsms.me/inter/font-files/Inter-Regular.woff';
+    const fontData = await fetch(fontUrl).then(r => r.arrayBuffer());
+
+    // Fetch logo image and encode as base64
+    const logoPath = './public/icon.png';
+    const logoBuffer = fs.readFileSync(logoPath);
+    const logoBase64 = logoBuffer.toString('base64');
+
+    // Generate SVG
     const svg = await satori(
       {
         type: 'div',
@@ -797,51 +802,21 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
             flexDirection: 'column',
             justifyContent: 'center',
             alignItems: 'center',
-            fontFamily: 'sans-serif'
+            fontFamily: 'Inter'
           },
           children: [
             {
-              type: 'div',
+              type: 'img',
               props: {
-                style: {
-                  fontSize: 40,
-                  color: '#7c3aed',
-                  marginBottom: 32,
-                  textAlign: 'center',
-                  maxWidth: 1000
-                },
-                children: question
+                src: `data:image/png;base64,${logoBase64}`,
+                style: { width: 100, marginBottom: 20, borderRadius: 10 }
               }
             },
             {
               type: 'div',
               props: {
-                style: {
-                  fontSize: 24,
-                  color: '#666',
-                  marginBottom: 24
-                },
-                children: `${category} ${endDate ? `| Ends: ${endDate}` : ''}`
-              }
-            },
-            {
-              type: 'div',
-              props: {
-                style: { marginTop: 40 },
-                children: {
-                  type: 'div',
-                  props: {
-                    style: {
-                      fontSize: 32,
-                      background: '#7c3aed',
-                      color: '#fff',
-                      borderRadius: 12,
-                      padding: '16px 48px',
-                      display: 'inline-block'
-                    },
-                    children: 'Trade Now'
-                  }
-                }
+                style: { color: 'black', fontSize: 48, fontFamily: 'Inter', textAlign: 'center' },
+                children: market.question
               }
             }
           ]
@@ -853,27 +828,25 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
         fonts: [
           {
             name: 'Inter',
-            data: await fetch('https://rsms.me/inter/font-files/Inter-Regular.woff').then(res => res.arrayBuffer()),
+            data: fontData,
             weight: 400,
-            style: 'normal',
-          },
-        ],
+            style: 'normal'
+          }
+        ]
       }
     );
 
     // Convert SVG to PNG
     svg2img(svg, { width: 1200, height: 630 }, (error, buffer) => {
       if (error) {
-        console.error('OG image generation error:', error);
         res.status(500).send('Failed to generate image');
       } else {
         res.set('Content-Type', 'image/png');
         res.send(buffer);
       }
     });
-  } catch (err) {
-    console.error('OG image generation error:', err);
-    res.status(500).send('Internal server error');
+  } catch (e) {
+    res.status(500).send('Failed to generate OG image');
   }
 });
 
