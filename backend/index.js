@@ -618,7 +618,12 @@ app.get('/api/activity', async (req, res) => {
   try {
     await ensureDbConnection();
     const { rows } = await db.query(
-      `SELECT * FROM trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
+      `SELECT t.*, m.question
+       FROM trades t
+       LEFT JOIN markets m ON t.market_address = m.market_address
+       WHERE t.user_fid = ANY($1::int[])
+       ORDER BY t.timestamp DESC
+       LIMIT 50`,
       [fids]
     );
 
@@ -634,7 +639,7 @@ app.get('/api/activity', async (req, res) => {
         username,
         avatar,
         action: 'prediction',
-        details: row.prediction_id || '',
+        details: row.question || row.prediction_id || '',
         timestamp: row.timestamp,
         amount: ethers.formatEther(row.amount),
         prediction: row.outcome === 1 || row.outcome === '1' ? 'yes' : 'no',
