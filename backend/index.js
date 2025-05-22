@@ -628,11 +628,19 @@ app.get('/api/activity', async (req, res) => {
     );
 
     const enriched = await Promise.all(rows.map(async (row) => {
-      let username = '', avatar = '';
+      let username = 'Unknown';
+      let avatar = '/default-avatar.png';
       if (row.user_fid && NEYNAR_API_KEY) {
         const profile = await fetchNeynarProfile(row.user_fid, NEYNAR_API_KEY, profileCache);
-        username = profile.username;
-        avatar = profile.avatar;
+        console.log('FID:', row.user_fid, 'Profile:', profile);
+        if (profile) {
+          if (profile.username && profile.username.trim() !== '') {
+            username = profile.username;
+          }
+          if (profile.avatar && profile.avatar.trim() !== '') {
+            avatar = profile.avatar;
+          }
+        }
       }
       return {
         id: row.tx_hash,
