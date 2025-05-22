@@ -629,19 +629,20 @@ app.get('/api/activity', async (req, res) => {
 
     const enriched = await Promise.all(rows.map(async (row) => {
       let username = 'Unknown';
-      let avatar = '/default-avatar.png';
       if (row.user_fid && NEYNAR_API_KEY) {
         const profile = await fetchNeynarProfile(row.user_fid, NEYNAR_API_KEY, profileCache);
-        console.log('FID:', row.user_fid, 'Profile:', profile);
-        if (profile) {
-          if (profile.username && profile.username.trim() !== '') {
-            username = profile.username;
-          }
-          if (profile.avatar && profile.avatar.trim() !== '') {
-            avatar = profile.avatar;
-          }
+        if (profile && profile.username && profile.username.trim() !== '') {
+          username = profile.username;
+        } else if (row.username && row.username.trim() !== '') {
+          username = row.username;
         }
+      } else if (row.username && row.username.trim() !== '') {
+        username = row.username;
       }
+      // Always use a generated avatar image based on FID
+      const avatar = row.user_fid
+        ? `https://api.dicebear.com/7.x/pixel-art/svg?seed=${row.user_fid}`
+        : '/default-avatar.png';
       return {
         id: row.tx_hash,
         username,
