@@ -583,10 +583,22 @@ app.get('/api/resolved-markets', async (req, res) => {
     const { rows } = await db.query(
       'SELECT * FROM markets WHERE resolved = true ORDER BY resolution_date DESC LIMIT 100'
     );
-    const formatted = rows.map((m) => {
+    // Fetch on-chain values for each market
+    const formatted = await Promise.all(rows.map(async (m) => {
       const yesPool = Number(m.yes_pool);
       const noPool = Number(m.no_pool);
       const totalPool = yesPool + noPool;
+      // Fetch on-chain values
+      let winningOutcome = null;
+      let sharesOutstanding = null;
+      try {
+        const contract = new ethers.Contract(m.market_address, marketAbi, httpProvider);
+        winningOutcome = await contract.winningOutcome();
+        sharesOutstanding = await contract.sharesOutstanding();
+      } catch (e) {
+        // fallback to DB value if available
+        winningOutcome = m.outcome;
+      }
       return {
         prediction_id: m.prediction_id,
         market_address: m.market_address,
@@ -603,8 +615,10 @@ app.get('/api/resolved-markets', async (req, res) => {
         outcome: m.outcome,
         yes_price: totalPool > 0 ? yesPool / totalPool : 0.5,
         no_price: totalPool > 0 ? noPool / totalPool : 0.5,
+        winningOutcome: winningOutcome?.toString(),
+        sharesOutstanding: sharesOutstanding?.toString(),
       };
-    });
+    }));
     res.json(formatted);
   } catch (err) {
     console.error('API error /resolved-markets:', err.message, err.stack);
