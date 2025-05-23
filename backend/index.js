@@ -527,6 +527,26 @@ app.get('/api/live-markets', async (req, res) => {
   }
 });
 
+function calculatePnL(trade) {
+  const amount = BigInt(trade.amount);
+  const shares = BigInt(trade.shares);
+  const creatorFee = BigInt(trade.creator_fee || '0');
+  const platformFee = BigInt(trade.platform_fee || '0');
+  const payoutPerShare = 10n ** 18n; // 1 MON in wei
+
+  if (trade.resolved_outcome === null || trade.resolved_outcome === undefined) {
+    return null; // Not resolved
+  }
+
+  if (trade.user_outcome == trade.resolved_outcome) {
+    // User was correct
+    return (shares * payoutPerShare) - amount - creatorFee - platformFee;
+  } else {
+    // User was wrong
+    return -amount - creatorFee - platformFee;
+  }
+}
+
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
@@ -535,16 +555,21 @@ app.get('/api/user-trades/:address', async (req, res) => {
       'SELECT * FROM trades WHERE LOWER(user_address) = $1 ORDER BY timestamp DESC LIMIT 100',
       [address.toLowerCase()]
     );
-    const formatted = rows.map((row) => ({
-      ...row,
-      amount_mon: ethers.formatEther(row.amount),
-      shares_mon: ethers.formatEther(row.shares),
-      creator_fee_mon: ethers.formatEther(row.creator_fee),
-      platform_fee_mon: ethers.formatEther(row.platform_fee),
-      prediction_id: row.prediction_id,
-      resolved_outcome: row.resolved_outcome,
-      user_outcome: row.user_outcome !== undefined ? row.user_outcome : row.outcome,
-    }));
+    const formatted = rows.map((row) => {
+      const pnlWei = calculatePnL(row);
+      return {
+        ...row,
+        amount_mon: ethers.formatEther(row.amount),
+        shares_mon: ethers.formatEther(row.shares),
+        creator_fee_mon: ethers.formatEther(row.creator_fee),
+        platform_fee_mon: ethers.formatEther(row.platform_fee),
+        prediction_id: row.prediction_id,
+        resolved_outcome: row.resolved_outcome,
+        user_outcome: row.user_outcome !== undefined ? row.user_outcome : row.outcome,
+        pnl_wei: pnlWei !== null ? pnlWei.toString() : null,
+        pnl_mon: pnlWei !== null ? ethers.formatEther(pnlWei) : null,
+      };
+    });
     res.json(formatted);
   } catch (err) {
     console.error('API error /user-trades:', err.message, err.stack);
