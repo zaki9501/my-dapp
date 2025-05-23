@@ -816,27 +816,34 @@ app.get('/health', (req, res) => {
 // --- Frame endpoint for a prediction market ---
 app.get('/frame/:marketId', async (req, res) => {
   const { marketId } = req.params;
-  // Fetch real market data from your DB
-  await ensureDbConnection();
-  const { rows } = await db.query('SELECT * FROM markets WHERE prediction_id = $1 LIMIT 1', [marketId]);
-  const market = rows[0];
-  const question = market?.question || "Prediction Market";
-  const imageUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/og-image/${marketId}.png`;
-  const tradeUrl = `${process.env.FRAME_BASE_URL || 'https://ragenodes.site'}/prediction/${marketId}`;
+  // Fetch market data from DB
+  const market = await getMarketFromDB(marketId);
+  const imageUrl = `https://ragenodes.site/og-image/${marketId}.png`;
+  const tradeUrl = `https://ragenodes.site/predictions/${marketId}`;
+
+  const frameEmbed = {
+    version: "next",
+    imageUrl,
+    button: {
+      title: "Trade",
+      action: {
+        type: "launch_frame",
+        url: tradeUrl,
+        name: "Monad Bazzar",
+        splashImageUrl: "https://ragenodes.site/icon.png",
+        splashBackgroundColor: "#f7f7f7"
+      }
+    }
+  };
 
   res.set('Content-Type', 'text/html');
   res.send(`
     <!DOCTYPE html>
     <html>
       <head>
-        <meta property="og:title" content="Prediction Market" />
-        <meta property="og:description" content="${question}" />
+        <meta name="fc:frame" content='${JSON.stringify(frameEmbed)}' />
+        <meta property="og:title" content="${market.question}" />
         <meta property="og:image" content="${imageUrl}" />
-        <meta property="fc:frame" content="vNext" />
-        <meta property="fc:frame:image" content="${imageUrl}" />
-        <meta property="fc:frame:button:1" content="Trade" />
-        <meta property="fc:frame:button:1:action" content="link" />
-        <meta property="fc:frame:button:1:target" content="${tradeUrl}" />
       </head>
       <body>
         <h1>Prediction Market Frame</h1>
