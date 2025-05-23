@@ -182,7 +182,8 @@ async function batchIndexMarketMetadata(marketAddresses) {
       { target: address, callData: iface.encodeFunctionData('noPool', []) },
       { target: address, callData: iface.encodeFunctionData('volume', []) },
       { target: address, callData: iface.encodeFunctionData('tradesCount', []) },
-      { target: address, callData: iface.encodeFunctionData('creatorFid', []) }
+      { target: address, callData: iface.encodeFunctionData('creatorFid', []) },
+      { target: address, callData: iface.encodeFunctionData('sharesOutstanding', []) },
     );
   }
 
@@ -190,7 +191,7 @@ async function batchIndexMarketMetadata(marketAddresses) {
     const [, returnData] = await multicall.aggregate(calls);
 
     for (let i = 0; i < marketAddresses.length; i++) {
-      const base = i * 14;
+      const base = i * 15;
       try {
         const [
           predictionId,
@@ -207,6 +208,7 @@ async function batchIndexMarketMetadata(marketAddresses) {
           volume,
           tradesCount,
           creatorFid,
+          sharesOutstanding,
         ] = [
           iface.decodeFunctionResult('predictionId', returnData[base])[0],
           iface.decodeFunctionResult('question', returnData[base + 1])[0],
@@ -222,13 +224,14 @@ async function batchIndexMarketMetadata(marketAddresses) {
           iface.decodeFunctionResult('volume', returnData[base + 11])[0],
           iface.decodeFunctionResult('tradesCount', returnData[base + 12])[0],
           iface.decodeFunctionResult('creatorFid', returnData[base + 13])[0],
+          iface.decodeFunctionResult('sharesOutstanding', returnData[base + 14])[0],
         ];
 
         await ensureDbConnection();
         await db.query(
           `INSERT INTO markets (
-            market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count, user_fid
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14,$15)
+            market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count, user_fid, shares_outstanding
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14,$15,$16)
           ON CONFLICT (market_address) DO UPDATE SET
             prediction_id = EXCLUDED.prediction_id,
             question = EXCLUDED.question,
@@ -243,7 +246,8 @@ async function batchIndexMarketMetadata(marketAddresses) {
             no_pool = EXCLUDED.no_pool,
             volume = EXCLUDED.volume,
             trades_count = EXCLUDED.trades_count,
-            user_fid = EXCLUDED.user_fid`,
+            user_fid = EXCLUDED.user_fid,
+            shares_outstanding = EXCLUDED.shares_outstanding`,
           [
             marketAddresses[i],
             predictionId,
@@ -260,6 +264,7 @@ async function batchIndexMarketMetadata(marketAddresses) {
             ethers.formatEther(volume),
             Number(tradesCount),
             creatorFid?.toString() || null,
+            sharesOutstanding ? sharesOutstanding.toString() : null,
           ]
         );
         console.log(`Batch indexed market ${marketAddresses[i]}: predictionId=${predictionId}`);
@@ -291,6 +296,7 @@ async function indexMarketMetadata(marketAddress) {
       volume,
       tradesCount,
       creatorFid,
+      sharesOutstanding,
     ] = await Promise.all([
       contractForReads.predictionId(),
       contractForReads.question(),
@@ -306,14 +312,15 @@ async function indexMarketMetadata(marketAddress) {
       contractForReads.volume(),
       contractForReads.tradesCount(),
       contractForReads.creatorFid(),
+      contractForReads.sharesOutstanding().catch(() => null),
     ]);
     console.log(`Indexing market ${marketAddress}: predictionId=${predictionId}, resolved=${resolved}`);
 
     await ensureDbConnection();
     await db.query(
       `INSERT INTO markets (
-        market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count, user_fid
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14,$15)
+        market_address, prediction_id, question, description, category, rule, status, resolution_date, resolved, outcome, yes_pool, no_pool, volume, trades_count, user_fid, shares_outstanding
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,TO_TIMESTAMP($8),$9,$10,$11,$12,$13,$14,$15,$16)
       ON CONFLICT (market_address) DO UPDATE SET
         prediction_id = EXCLUDED.prediction_id,
         question = EXCLUDED.question,
@@ -328,7 +335,8 @@ async function indexMarketMetadata(marketAddress) {
         no_pool = EXCLUDED.no_pool,
         volume = EXCLUDED.volume,
         trades_count = EXCLUDED.trades_count,
-        user_fid = EXCLUDED.user_fid`,
+        user_fid = EXCLUDED.user_fid,
+        shares_outstanding = EXCLUDED.shares_outstanding`,
       [
         marketAddress,
         predictionId,
@@ -345,6 +353,7 @@ async function indexMarketMetadata(marketAddress) {
         ethers.formatEther(volume),
         Number(tradesCount),
         creatorFid?.toString() || null,
+        sharesOutstanding ? sharesOutstanding.toString() : null,
       ]
     );
     console.log('Indexed/updated market metadata for', marketAddress);
@@ -598,6 +607,7 @@ app.get('/api/resolved-markets', async (req, res) => {
       } catch (e) {
         // fallback to DB value if available
         winningOutcome = m.outcome;
+        sharesOutstanding = m.shares_outstanding;
       }
       return {
         prediction_id: m.prediction_id,
