@@ -626,7 +626,7 @@ app.get('/api/resolved-markets', async (req, res) => {
         yes_price: totalPool > 0 ? yesPool / totalPool : 0.5,
         no_price: totalPool > 0 ? noPool / totalPool : 0.5,
         winningOutcome: winningOutcome?.toString(),
-        sharesOutstanding: sharesOutstanding?.toString(),
+        sharesOutstanding: (sharesOutstanding ?? m.shares_outstanding)?.toString(),
       };
     }));
     res.json(formatted);
