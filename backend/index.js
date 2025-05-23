@@ -557,6 +557,17 @@ app.get('/api/user-trades/:address', async (req, res) => {
       marketMap[m.market_address] = m;
     }
 
+    // Before mapping trades, build a map of total winning shares per market
+    const winningSharesMap = {};
+    for (const market of markets) {
+      const marketTrades = trades.filter(t => t.market_address === market.market_address);
+      const winningOutcome = String(market.outcome) === '1' || market.outcome === true ? 1 : 0;
+      const totalWinningShares = marketTrades
+        .filter(t => Number(t.outcome) === winningOutcome)
+        .reduce((sum, t) => sum + Number(ethers.formatEther(t.shares)), 0);
+      winningSharesMap[market.market_address] = BigInt(Math.round(totalWinningShares * 1e18));
+    }
+
     function calculatePnL(trade, market) {
       const amount = BigInt(trade.amount);
       const shares = BigInt(trade.shares);
@@ -566,18 +577,13 @@ app.get('/api/user-trades/:address', async (req, res) => {
         return null; // Not resolved
       }
       if (!market) return null;
-      // Determine the winning pool and shares
-      const isYes = String(trade.resolved_outcome) === '1' || trade.resolved_outcome === true;
       const totalPool = BigInt(parseFloat(market.yes_pool) * 1e18 + parseFloat(market.no_pool) * 1e18);
-      const totalWinningShares = BigInt(market.shares_outstanding || '0');
+      const totalWinningShares = winningSharesMap[market.market_address] || 0n;
       if (trade.user_outcome == trade.resolved_outcome) {
-        // User was correct
-        // payoutPerShare = totalPool / totalWinningShares
         if (totalWinningShares === 0n) return null;
         const payoutWei = (shares * totalPool) / totalWinningShares;
         return payoutWei - amount - creatorFee - platformFee;
       } else {
-        // User was wrong
         return -amount - creatorFee - platformFee;
       }
     }
