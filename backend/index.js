@@ -541,17 +541,15 @@ function calculatePnL(trade) {
   const shares = BigInt(trade.shares);
   const creatorFee = BigInt(trade.creator_fee || '0');
   const platformFee = BigInt(trade.platform_fee || '0');
-  const payoutPerShare = 10n ** 18n; // 1 MON in wei
+  const payoutPerShare = totalPool / totalWinningShares
 
   if (trade.resolved_outcome === null || trade.resolved_outcome === undefined) {
     return null; // Not resolved
   }
 
   if (trade.user_outcome == trade.resolved_outcome) {
-    // User was correct
     return (shares * payoutPerShare) - amount - creatorFee - platformFee;
   } else {
-    // User was wrong
     return -amount - creatorFee - platformFee;
   }
 }
