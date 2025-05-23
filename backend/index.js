@@ -536,34 +536,55 @@ app.get('/api/live-markets', async (req, res) => {
   }
 });
 
-function calculatePnL(trade) {
-  const amount = BigInt(trade.amount);
-  const shares = BigInt(trade.shares);
-  const creatorFee = BigInt(trade.creator_fee || '0');
-  const platformFee = BigInt(trade.platform_fee || '0');
-  const payoutPerShare = totalPool / totalWinningShares
-
-  if (trade.resolved_outcome === null || trade.resolved_outcome === undefined) {
-    return null; // Not resolved
-  }
-
-  if (trade.user_outcome == trade.resolved_outcome) {
-    return (shares * payoutPerShare) - amount - creatorFee - platformFee;
-  } else {
-    return -amount - creatorFee - platformFee;
-  }
-}
-
 app.get('/api/user-trades/:address', async (req, res) => {
   const { address } = req.params;
   try {
     await ensureDbConnection();
-    const { rows } = await db.query(
+    const { rows: trades } = await db.query(
       'SELECT * FROM trades WHERE LOWER(user_address) = $1 ORDER BY timestamp DESC LIMIT 100',
       [address.toLowerCase()]
     );
-    const formatted = rows.map((row) => {
-      const pnlWei = calculatePnL(row);
+
+    // Get all unique market addresses from the trades
+    const marketAddresses = [...new Set(trades.map(t => t.market_address))];
+    // Fetch all relevant markets in one query
+    const { rows: markets } = await db.query(
+      'SELECT market_address, yes_pool, no_pool, shares_outstanding, outcome FROM markets WHERE market_address = ANY($1)',
+      [marketAddresses]
+    );
+    const marketMap = {};
+    for (const m of markets) {
+      marketMap[m.market_address] = m;
+    }
+
+    function calculatePnL(trade, market) {
+      const amount = BigInt(trade.amount);
+      const shares = BigInt(trade.shares);
+      const creatorFee = BigInt(trade.creator_fee || '0');
+      const platformFee = BigInt(trade.platform_fee || '0');
+      if (trade.resolved_outcome === null || trade.resolved_outcome === undefined) {
+        return null; // Not resolved
+      }
+      if (!market) return null;
+      // Determine the winning pool and shares
+      const isYes = String(trade.resolved_outcome) === '1' || trade.resolved_outcome === true;
+      const totalPool = BigInt(parseFloat(market.yes_pool) * 1e18 + parseFloat(market.no_pool) * 1e18);
+      const totalWinningShares = BigInt(market.shares_outstanding || '0');
+      if (trade.user_outcome == trade.resolved_outcome) {
+        // User was correct
+        // payoutPerShare = totalPool / totalWinningShares
+        if (totalWinningShares === 0n) return null;
+        const payoutWei = (shares * totalPool) / totalWinningShares;
+        return payoutWei - amount - creatorFee - platformFee;
+      } else {
+        // User was wrong
+        return -amount - creatorFee - platformFee;
+      }
+    }
+
+    const formatted = trades.map((row) => {
+      const market = marketMap[row.market_address];
+      const pnlWei = calculatePnL(row, market);
       return {
         ...row,
         amount_mon: ethers.formatEther(row.amount),
