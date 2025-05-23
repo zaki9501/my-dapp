@@ -739,14 +739,15 @@ app.get('/api/activity', async (req, res) => {
 
 app.get('/api/expired-markets', async (req, res) => {
   try {
-    await ensureDbConnection();
-    const { rows } = await db.query(
-      "SELECT * FROM markets WHERE resolved = false AND resolution_date <= NOW() ORDER BY resolution_date ASC"
+    const now = new Date();
+    const result = await db.query(
+      `SELECT * FROM markets WHERE resolution_date < $1 AND resolved = false ORDER BY resolution_date ASC`,
+      [now]
     );
-    res.json(rows);
+    res.json(result.rows);
   } catch (err) {
-    console.error('API error /expired-markets:', err.message, err.stack);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error fetching expired markets:', err);
+    res.status(500).json({ error: 'Failed to fetch expired markets' });
   }
 });
 
