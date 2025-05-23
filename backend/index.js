@@ -568,7 +568,7 @@ app.get('/api/user-trades/:address', async (req, res) => {
       winningSharesMap[market.market_address] = BigInt(Math.round(totalWinningShares * 1e18));
     }
 
-    function calculatePnL(trade, market) {
+    function calculatePnL(trade, market, totalWinningShares) {
       const amount = BigInt(trade.amount);
       const shares = BigInt(trade.shares);
       const creatorFee = BigInt(trade.creator_fee || '0');
@@ -578,11 +578,10 @@ app.get('/api/user-trades/:address', async (req, res) => {
       }
       if (!market) return null;
       const totalPool = BigInt(parseFloat(market.yes_pool) * 1e18 + parseFloat(market.no_pool) * 1e18);
-      const totalWinningShares = winningSharesMap[market.market_address] || 0n;
       if (trade.user_outcome == trade.resolved_outcome) {
         if (totalWinningShares === 0n) return null;
-        const payoutWei = (shares * totalPool) / totalWinningShares;
-        return payoutWei - amount - creatorFee - platformFee;
+        const claimable = (shares * totalPool) / totalWinningShares;
+        return claimable - amount - creatorFee - platformFee;
       } else {
         return -amount - creatorFee - platformFee;
       }
@@ -590,7 +589,7 @@ app.get('/api/user-trades/:address', async (req, res) => {
 
     const formatted = trades.map((row) => {
       const market = marketMap[row.market_address];
-      const pnlWei = calculatePnL(row, market);
+      const pnlWei = calculatePnL(row, market, winningSharesMap[row.market_address] || 0n);
       return {
         ...row,
         amount_mon: ethers.formatEther(row.amount),
