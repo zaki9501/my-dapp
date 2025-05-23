@@ -988,3 +988,23 @@ async function fetchNeynarProfile(fid, apiKey, cache) {
   cache[fid] = { username: '', avatar: '' };
   return cache[fid];
 }
+
+app.get('/prediction/:id', async (req, res) => {
+  const prediction = await getPredictionFromDB(req.params.id);
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta property="fc:frame" content="vNext" />
+        <meta property="fc:frame:image" content="${prediction.imageUrl}" />
+        <meta property="fc:frame:button:1" content="Trade" />
+        <meta property="fc:frame:post_url" content="https://yourapp.com/prediction/${prediction.id}/trade" />
+        <!-- ...other meta tags... -->
+      </head>
+      <body>
+        <div id="root"></div>
+        <script src="/main.js"></script>
+      </body>
+    </html>
+  `);
+});
