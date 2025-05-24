@@ -933,6 +933,25 @@ app.post('/api/webhook', express.json(), async (req, res) => {
   }
 });
 
+app.post('/api/log-futures-trade', express.json(), async (req, res) => {
+  const { fid, wallet, txHash, asset, direction, size, leverage, entryPrice, amount } = req.body;
+  if (!fid || !wallet) {
+    return res.status(400).json({ error: 'Missing FID or wallet address' });
+  }
+  try {
+    await ensureDbConnection();
+    await db.query(
+      `INSERT INTO futures_trades (tx_hash, user_fid, user_address, asset, direction, size, leverage, entry_price, timestamp, amount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)`,
+      [txHash, fid, wallet, asset, direction, size, leverage, entryPrice, amount]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error logging futures trade:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to log futures trade' });
+  }
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
