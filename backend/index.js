@@ -694,7 +694,9 @@ app.get('/api/activity', async (req, res) => {
 
   try {
     await ensureDbConnection();
-    const { rows } = await db.query(
+
+    // 1. Fetch prediction trades
+    const { rows: predictionRows } = await db.query(
       `SELECT t.*, m.question
        FROM trades t
        LEFT JOIN markets m ON t.market_address = m.market_address
@@ -704,7 +706,14 @@ app.get('/api/activity', async (req, res) => {
       [fids]
     );
 
-    const enriched = await Promise.all(rows.map(async (row) => {
+    // 2. Fetch futures trades
+    const { rows: futuresRows } = await db.query(
+      `SELECT * FROM futures_trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
+      [fids]
+    );
+
+    // 3. Format prediction activities
+    const predictionActivities = await Promise.all(predictionRows.map(async (row) => {
       let username = 'Unknown';
       if (row.user_fid && NEYNAR_API_KEY) {
         const profile = await fetchNeynarProfile(row.user_fid, NEYNAR_API_KEY, profileCache);
@@ -716,7 +725,6 @@ app.get('/api/activity', async (req, res) => {
       } else if (row.username && row.username.trim() !== '') {
         username = row.username;
       }
-      // Always use a generated avatar image based on FID
       const avatar = row.user_fid
         ? `https://api.dicebear.com/7.x/pixel-art/svg?seed=${row.user_fid}`
         : '/default-avatar.png';
@@ -731,7 +739,30 @@ app.get('/api/activity', async (req, res) => {
         prediction: row.outcome === 1 || row.outcome === '1' ? 'yes' : 'no',
       };
     }));
-    res.json(enriched);
+
+    // 4. Format futures activities
+    const futuresActivities = futuresRows.map(row => ({
+      id: row.tx_hash,
+      username: row.username || 'Unknown',
+      avatar: row.user_fid
+        ? `https://api.dicebear.com/7.x/pixel-art/svg?seed=${row.user_fid}`
+        : '/default-avatar.png',
+      action: 'futures',
+      details: row.asset,
+      asset: row.asset,
+      direction: row.direction,
+      leverage: Number(row.leverage),
+      entry_price: Number(row.entry_price),
+      timestamp: row.timestamp,
+      amount: Number(row.amount),
+    }));
+
+    // 5. Merge and sort all activities
+    const allActivities = [...predictionActivities, ...futuresActivities].sort(
+      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+    );
+
+    res.json(allActivities.slice(0, 10));
   } catch (err) {
     console.error('API error in /api/activity:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
