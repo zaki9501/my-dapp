@@ -741,20 +741,33 @@ app.get('/api/activity', async (req, res) => {
     }));
 
     // 4. Format futures activities
-    const futuresActivities = futuresRows.map(row => ({
-      id: row.tx_hash,
-      username: row.username || 'Unknown',
-      avatar: row.user_fid
-        ? `https://api.dicebear.com/7.x/pixel-art/svg?seed=${row.user_fid}`
-        : '/default-avatar.png',
-      action: 'futures',
-      details: row.asset,
-      asset: row.asset,
-      direction: row.direction,
-      leverage: Number(row.leverage),
-      entry_price: Number(row.entry_price),
-      timestamp: row.timestamp,
-      amount: Number(row.amount),
+    const futuresActivities = await Promise.all(futuresRows.map(async (row) => {
+      let username = 'Unknown';
+      if (row.user_fid && NEYNAR_API_KEY) {
+        const profile = await fetchNeynarProfile(row.user_fid, NEYNAR_API_KEY, profileCache);
+        if (profile && profile.username && profile.username.trim() !== '') {
+          username = profile.username;
+        } else if (row.username && row.username.trim() !== '') {
+          username = row.username;
+        }
+      } else if (row.username && row.username.trim() !== '') {
+        username = row.username;
+      }
+      return {
+        id: row.tx_hash,
+        username,
+        avatar: row.user_fid
+          ? `https://api.dicebear.com/7.x/pixel-art/svg?seed=${row.user_fid}`
+          : '/default-avatar.png',
+        action: 'futures',
+        details: row.asset,
+        asset: row.asset,
+        direction: row.direction,
+        leverage: Number(row.leverage),
+        entry_price: Number(row.entry_price),
+        timestamp: row.timestamp,
+        amount: Number(row.amount),
+      };
     }));
 
     // 5. Merge and sort all activities
