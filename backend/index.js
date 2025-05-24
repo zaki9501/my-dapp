@@ -1055,3 +1055,14 @@ await sendNotification(
   'A new prediction market is live. Check it out!', // body
   'https://ragenodes.site/predictions' // targetUrl (where user lands when clicking notification)
 );
+
+await db.query(
+  `INSERT INTO futures_trades (tx_hash, user_fid, username, asset, direction, size, leverage, entry_price, timestamp, amount)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)`,
+  [txHash, userFid, username, asset, direction, size, leverage, entryPrice, amount]
+);
+
+const { rows: futuresRows } = await db.query(
+  `SELECT * FROM futures_trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
+  [fids]
+);
