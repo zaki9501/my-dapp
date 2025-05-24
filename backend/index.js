@@ -994,6 +994,30 @@ app.post('/api/log-futures-trade', express.json(), async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)`,
       [txHash, fid, wallet, asset, direction, size, leverage, entryPrice, amount]
     );
+
+    // After logging the trade for user with FID = friendFid
+    const { rows: notifyRows } = await db.query(
+      'SELECT fid FROM notify_friends WHERE $1 = ANY(friend_fids)',
+      [fid] // friendFid = the FID of the user who just did the activity
+    );
+
+    for (const row of notifyRows) {
+      // For each user who wants notifications about this friend
+      const { rows: tokenRows } = await db.query(
+        'SELECT token, url FROM notification_tokens WHERE fid = $1',
+        [row.fid]
+      );
+      if (tokenRows.length) {
+        await sendNotification(
+          row.fid,
+          `friend-activity-${fid}-${Date.now()}`,
+          'Friend Activity!',
+          `Your friend just made a new trade!`,
+          'https://yourapp.com/friends'
+        );
+      }
+    }
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error logging futures trade:', err.message, err.stack);
@@ -1017,6 +1041,25 @@ app.post('/api/save-notification-token', express.json(), async (req, res) => {
   } catch (err) {
     console.error('Error saving notification token:', err.message, err.stack);
     res.status(500).json({ error: 'Failed to save notification token' });
+  }
+});
+
+app.post('/api/save-notify-friends', express.json(), async (req, res) => {
+  const { fid, notifyFids } = req.body;
+  if (!fid || !Array.isArray(notifyFids)) {
+    return res.status(400).json({ error: 'Missing fid or notifyFids' });
+  }
+  try {
+    await db.query(
+      `INSERT INTO notify_friends (fid, friend_fids)
+       VALUES ($1, $2)
+       ON CONFLICT (fid) DO UPDATE SET friend_fids = EXCLUDED.friend_fids`,
+      [fid, notifyFids]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error saving notify friends:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to save notify friends' });
   }
 });
 
