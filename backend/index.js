@@ -775,7 +775,10 @@ app.get('/api/activity', async (req, res) => {
       (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
     );
 
-    res.json(allActivities.slice(0, 10));
+    res.json(allActivities.slice(0, 10).map(a => ({
+      ...a,
+      user_fid: a.user_fid || a.fid,
+    })));
   } catch (err) {
     console.error('API error in /api/activity:', err.message, err.stack);
     res.status(500).json({ error: 'Internal server error' });
