@@ -7,6 +7,7 @@ import fetch from 'node-fetch';
 import satori from 'satori';
 import svg2img from 'svg2img';
 import fs from 'fs';
+import { parseWebhookEvent, verifyAppKeyWithNeynar } from "@farcaster/frame-node";
 
 // Initialize Express app
 const app = express();
@@ -916,10 +917,20 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
   }
 });
 
-app.post('/api/webhook', express.json(), (req, res) => {
-  // Process the webhook payload
-  console.log('Received webhook:', req.body);
-  res.status(200).json({ success: true });
+app.post('/api/webhook', express.json(), async (req, res) => {
+  try {
+    // This will throw if the signature is invalid
+    const data = await parseWebhookEvent(req.body, verifyAppKeyWithNeynar);
+
+    // Now data is verified and you can safely process it
+    // ... (your logic here, e.g. store tokens, etc.)
+
+    res.status(200).json({ success: true });
+  } catch (e) {
+    // Signature invalid or other error
+    console.error('Invalid webhook signature:', e);
+    res.status(400).json({ error: 'Invalid signature' });
+  }
 });
 
 // Start the server
@@ -998,3 +1009,49 @@ app.get('/prediction/:id', async (req, res) => {
     </html>
   `);
 });
+
+/**
+ * Send a Farcaster Mini App notification to a user.
+ * @param {string} fid - The user's Farcaster FID.
+ * @param {string} notificationId - Unique notification ID (e.g. "daily-reminder-2024-06-05").
+ * @param {string} title - Notification title (max 32 chars).
+ * @param {string} body - Notification body (max 128 chars).
+ * @param {string} targetUrl - URL to open when user clicks notification (must be on your domain).
+ */
+async function sendNotification(fid, notificationId, title, body, targetUrl) {
+  // 1. Get token and url from DB
+  const { rows } = await db.query('SELECT token, url FROM notification_tokens WHERE fid = $1', [fid]);
+  if (!rows.length) {
+    console.warn(`No notification token found for fid ${fid}`);
+    return;
+  }
+
+  const { token, url } = rows[0];
+
+  // 2. Send notification
+  const payload = {
+    notificationId, // e.g. "daily-reminder-2024-06-05"
+    title,          // e.g. "New Prediction!"
+    body,           // e.g. "A new prediction market is live."
+    targetUrl,      // e.g. "https://ragenodes.site/predictions"
+    tokens: [token]
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  const result = await response.json();
+  console.log('Notification result:', result);
+  return result;
+}
+
+await sendNotification(
+  '123456', // FID of the user
+  'new-market-2024-06-05', // notificationId (should be unique per notification type/day)
+  'New Prediction!', // title
+  'A new prediction market is live. Check it out!', // body
+  'https://ragenodes.site/predictions' // targetUrl (where user lands when clicking notification)
+);
