@@ -814,39 +814,24 @@ app.get('/health', (req, res) => {
 });
 
 // --- Frame endpoint for a prediction market ---
-app.get('/frame/:marketId', async (req, res) => {
-  const { marketId } = req.params;
-  // Fetch market data from DB
-  const market = await getMarketFromDB(marketId);
-  const imageUrl = `https://ragenodes.site/og-image/${marketId}.png`;
-  const tradeUrl = `https://ragenodes.site/predictions/${marketId}`;
-
-  const frameEmbed = {
-    version: "next",
-    imageUrl,
-    button: {
-      title: "Trade",
-      action: {
-        type: "launch_frame",
-        url: tradeUrl,
-        name: "Monad Bazzar",
-        splashImageUrl: "https://ragenodes.site/icon.png",
-        splashBackgroundColor: "#f7f7f7"
-      }
-    }
-  };
-
-  res.set('Content-Type', 'text/html');
+app.get('/frame/:id', async (req, res) => {
+  const { id } = req.params;
+  // Fetch prediction data from DB
+  const prediction = await getPredictionFromDB(id);
+  if (!prediction) return res.status(404).send('Not found');
   res.send(`
     <!DOCTYPE html>
     <html>
       <head>
-        <meta name="fc:frame" content='${JSON.stringify(frameEmbed)}' />
-        <meta property="og:title" content="${market.question}" />
-        <meta property="og:image" content="${imageUrl}" />
+        <meta property="fc:frame" content="vNext" />
+        <meta property="fc:frame:image" content="${prediction.imageUrl}" />
+        <meta property="fc:frame:button:1" content="Trade" />
+        <meta property="fc:frame:post_url" content="https://ragenodes.site/predictions" />
+        <meta property="og:title" content="${prediction.question}" />
+        <meta property="og:image" content="${prediction.imageUrl}" />
       </head>
       <body>
-        <h1>Prediction Market Frame</h1>
+        <h1>${prediction.question}</h1>
       </body>
     </html>
   `);
