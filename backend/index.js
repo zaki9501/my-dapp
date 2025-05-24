@@ -737,6 +737,7 @@ app.get('/api/activity', async (req, res) => {
         timestamp: row.timestamp,
         amount: ethers.formatEther(row.amount),
         prediction: row.outcome === 1 || row.outcome === '1' ? 'yes' : 'no',
+        user_fid: row.user_fid,
       };
     }));
 
@@ -767,6 +768,7 @@ app.get('/api/activity', async (req, res) => {
         entry_price: Number(row.entry_price),
         timestamp: row.timestamp,
         amount: Number(row.amount),
+        user_fid: row.user_fid,
       };
     }));
 
@@ -1131,4 +1133,4 @@ await db.query(
 const { rows: futuresRows } = await db.query(
   `SELECT * FROM futures_trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
   [fids]
-);
+);v
