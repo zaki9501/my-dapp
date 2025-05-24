@@ -1001,6 +1001,25 @@ app.post('/api/log-futures-trade', express.json(), async (req, res) => {
   }
 });
 
+app.post('/api/save-notification-token', express.json(), async (req, res) => {
+  const { fid, token, url } = req.body;
+  if (!fid || !token || !url) {
+    return res.status(400).json({ error: 'Missing fid, token, or url' });
+  }
+  try {
+    await db.query(
+      `INSERT INTO notification_tokens (fid, token, url)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (fid) DO UPDATE SET token = EXCLUDED.token, url = EXCLUDED.url`,
+      [fid, token, url]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error saving notification token:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to save notification token' });
+  }
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
@@ -1133,4 +1152,13 @@ await db.query(
 const { rows: futuresRows } = await db.query(
   `SELECT * FROM futures_trades WHERE user_fid = ANY($1::int[]) ORDER BY timestamp DESC LIMIT 50`,
   [fids]
-);v
+);
+
+// Example usage in your backend
+await sendNotification(
+  friendFid, // FID of the user to notify
+  'activity-2024-06-06-<unique>', // notificationId (unique per notification)
+  'Friend Activity!', // title
+  'Your friend just made a new trade!', // body
+  'https://yourapp.com/predictions' // targetUrl
+);
