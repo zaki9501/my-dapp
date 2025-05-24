@@ -932,10 +932,8 @@ app.get('/og-image/:predictionId.png', async (req, res) => {
 });
 
 app.post('/api/webhook', express.json(), (req, res) => {
-  // You can log or process the webhook payload here
+  // Process the webhook payload
   console.log('Received webhook:', req.body);
-
-  // Respond with 200 OK
   res.status(200).json({ success: true });
 });
 
