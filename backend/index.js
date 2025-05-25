@@ -1092,6 +1092,7 @@ app.get('/api/futures-leaderboard', async (req, res) => {
 });
 
 app.post('/api/track-referral', express.json(), async (req, res) => {
+  console.log("Received /api/track-referral RAW BODY:", req.body);
   const { referrerFid, referredFid } = req.body;
   if (!referrerFid || !referredFid) return res.status(400).json({ error: 'Missing FID' });
   try {
@@ -1103,6 +1104,11 @@ app.post('/api/track-referral', express.json(), async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to track referral' });
   }
+});
+
+app.get('/api/track-referral-test', (req, res) => {
+  console.log("Received GET /api/track-referral-test");
+  res.json({ ok: true });
 });
 
 // Start the server
