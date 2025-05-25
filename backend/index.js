@@ -867,9 +867,14 @@ app.get('/health', (req, res) => {
 // --- Frame endpoint for a prediction market ---
 app.get('/frame/:id', async (req, res) => {
   const { id } = req.params;
+  const ref = req.query.ref;
   // Fetch prediction data from DB
   const prediction = await getPredictionFromDB(id);
   if (!prediction) return res.status(404).send('Not found');
+  // Build the post_url with ref if present
+  const postUrl = ref
+    ? `https://ragenodes.site/predictions?ref=${encodeURIComponent(ref)}`
+    : `https://ragenodes.site/predictions`;
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -877,7 +882,7 @@ app.get('/frame/:id', async (req, res) => {
         <meta property="fc:frame" content="vNext" />
         <meta property="fc:frame:image" content="${prediction.imageUrl}" />
         <meta property="fc:frame:button:1" content="Trade" />
-        <meta property="fc:frame:post_url" content="https://ragenodes.site/predictions" />
+        <meta property="fc:frame:post_url" content="${postUrl}" />
         <meta property="og:title" content="${prediction.question}" />
         <meta property="og:image" content="${prediction.imageUrl}" />
       </head>
