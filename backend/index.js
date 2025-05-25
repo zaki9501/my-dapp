@@ -1063,6 +1063,28 @@ app.post('/api/save-notify-friends', express.json(), async (req, res) => {
   }
 });
 
+app.get('/api/futures-leaderboard', async (req, res) => {
+  try {
+    await ensureDbConnection();
+    const { rows } = await db.query(`
+      SELECT
+        user_address,
+        MAX(user_fid) AS user_fid,
+        COUNT(*) AS total_trades,
+        SUM(amount::numeric) AS total_volume,
+        SUM(size::numeric) AS total_size
+      FROM futures_trades
+      GROUP BY user_address
+      ORDER BY total_volume DESC
+      LIMIT 20
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('Futures Leaderboard API error:', err.message, err.stack);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
