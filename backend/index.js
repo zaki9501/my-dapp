@@ -1111,6 +1111,11 @@ app.get('/api/track-referral-test', (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/test-referral', express.json(), (req, res) => {
+  console.log("Received /api/test-referral:", req.body);
+  res.json({ ok: true });
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
