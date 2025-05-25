@@ -1086,6 +1086,20 @@ app.get('/api/futures-leaderboard', async (req, res) => {
   }
 });
 
+app.post('/api/track-referral', express.json(), async (req, res) => {
+  const { referrerFid, referredFid } = req.body;
+  if (!referrerFid || !referredFid) return res.status(400).json({ error: 'Missing FID' });
+  try {
+    await db.query(
+      'INSERT INTO referrals (referrer_fid, referred_fid) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [referrerFid, referredFid]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to track referral' });
+  }
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
