@@ -667,6 +667,7 @@ app.get('/api/leaderboard', async (req, res) => {
     const { rows } = await db.query(`
       SELECT
         user_address,
+        MAX(user_fid) AS user_fid,
         COUNT(DISTINCT prediction_id) AS total_predictions,
         COUNT(DISTINCT CASE WHEN user_outcome::int = resolved_outcome::int AND resolved_outcome IS NOT NULL THEN prediction_id END) AS correct_predictions,
         COUNT(*) AS total_trades,
