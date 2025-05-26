@@ -1132,10 +1132,17 @@ app.post('/api/reward-referral', express.json(), async (req, res) => {
     return res.status(400).json({ error: 'Missing referrer or referred address' });
   }
   try {
-    // Call the contract to credit the reward
-    const tx = await contract.rewardReferral(referrer, referred);
+    // Lookup addresses
+    const { rows: refRows } = await db.query('SELECT user_address FROM users WHERE fid = $1', [referrer]);
+    const { rows: referredRows } = await db.query('SELECT user_address FROM users WHERE fid = $1', [referred]);
+    if (!refRows.length || !referredRows.length) {
+      return res.status(400).json({ error: 'Could not find user address for one or both FIDs' });
+    }
+    const referrerAddress = refRows[0].user_address;
+    const referredAddress = referredRows[0].user_address;
+    // Now call contract.rewardReferral(referrerAddress, referredAddress)
+    const tx = await contract.rewardReferral(referrerAddress, referredAddress);
     await tx.wait();
-    console.log(`Rewarded referral: referrer=${referrer}, referred=${referred}, txHash=${tx.hash}`);
     res.json({ success: true, txHash: tx.hash });
   } catch (err) {
     console.error('Error rewarding referral:', err);
@@ -1286,13 +1293,18 @@ await sendNotification(
   'https://ragenodes.site/predictions' // targetUrl
 );
 
-const CONTRACT_ADDRESS = '0x869E4D52609097de6F1eefbB5b9F1f152fBecD51'; // your deployed contract
-const PRIVATE_KEY = process.env.OWNER_PRIVATE_KEY; // set in your .env
-const RPC_URL = process.env.RPC_URL; // set in your .env
+console.log('CONTRACT_ADDRESS:', process.env.CONTRACT_ADDRESS);
+console.log('OWNER_PRIVATE_KEY:', !!process.env.OWNER_PRIVATE_KEY);
+console.log('REFERRAL_REWARD_ABI:', !!process.env.REFERRAL_REWARD_ABI);
+console.log('RPC_URL:', process.env.RPC_URL);
+
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
+const PRIVATE_KEY = process.env.OWNER_PRIVATE_KEY;
+const RPC_URL = process.env.RPC_URL;
+const abi = JSON.parse(process.env.REFERRAL_REWARD_ABI);
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const ownerWallet = new ethers.Wallet(PRIVATE_KEY, provider);
-const abi = JSON.parse(process.env.REFERRAL_REWARD_ABI);
 const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, ownerWallet);
 
 // Endpoint to reward a referral on-chain
@@ -1302,8 +1314,16 @@ app.post('/api/reward-referral', express.json(), async (req, res) => {
     return res.status(400).json({ error: 'Missing referrer or referred address' });
   }
   try {
-    // Call the contract to credit the reward
-    const tx = await contract.rewardReferral(referrer, referred);
+    // Lookup addresses
+    const { rows: refRows } = await db.query('SELECT user_address FROM users WHERE fid = $1', [referrer]);
+    const { rows: referredRows } = await db.query('SELECT user_address FROM users WHERE fid = $1', [referred]);
+    if (!refRows.length || !referredRows.length) {
+      return res.status(400).json({ error: 'Could not find user address for one or both FIDs' });
+    }
+    const referrerAddress = refRows[0].user_address;
+    const referredAddress = referredRows[0].user_address;
+    // Now call contract.rewardReferral(referrerAddress, referredAddress)
+    const tx = await contract.rewardReferral(referrerAddress, referredAddress);
     await tx.wait();
     res.json({ success: true, txHash: tx.hash });
   } catch (err) {
