@@ -1150,6 +1150,24 @@ app.post('/api/reward-referral', express.json(), async (req, res) => {
   }
 });
 
+app.post('/api/register-user', express.json(), async (req, res) => {
+  const { fid, user_address } = req.body;
+  if (!fid || !user_address) {
+    return res.status(400).json({ error: 'Missing fid or user_address' });
+  }
+  try {
+    await db.query(
+      `INSERT INTO users (fid, user_address)
+       VALUES ($1, $2)
+       ON CONFLICT (fid) DO UPDATE SET user_address = EXCLUDED.user_address`,
+      [fid, user_address]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to register user' });
+  }
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
