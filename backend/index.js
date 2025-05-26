@@ -1266,7 +1266,8 @@ const RPC_URL = process.env.RPC_URL; // set in your .env
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const ownerWallet = new ethers.Wallet(PRIVATE_KEY, provider);
-const contract = new ethers.Contract(CONTRACT_ADDRESS, ReferralRewardsArtifact.abi, ownerWallet);
+const abi = JSON.parse(process.env.REFERRAL_REWARD_ABI);
+const contract = new ethers.Contract(CONTRACT_ADDRESS, abi, ownerWallet);
 
 // Endpoint to reward a referral on-chain
 app.post('/api/reward-referral', express.json(), async (req, res) => {
