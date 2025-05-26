@@ -8,7 +8,6 @@ import satori from 'satori';
 import svg2img from 'svg2img';
 import fs from 'fs';
 import { parseWebhookEvent, verifyAppKeyWithNeynar } from "@farcaster/frame-node";
-import ReferralRewardsArtifact from './path/to/ReferralReward.json'; // adjust path as needed
 
 // Initialize Express app
 const app = express();
@@ -1257,7 +1256,7 @@ await sendNotification(
   'activity-2024-06-06-<unique>', // notificationId (unique per notification)
   'Friend Activity!', // title
   'Your friend just made a new trade!', // body
-  'https://yourapp.com/predictions' // targetUrl
+  'https://ragenodes.site/predictions' // targetUrl
 );
 
 const CONTRACT_ADDRESS = '0x869E4D52609097de6F1eefbB5b9F1f152fBecD51'; // your deployed contract
