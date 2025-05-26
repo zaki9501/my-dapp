@@ -8,6 +8,7 @@ import satori from 'satori';
 import svg2img from 'svg2img';
 import fs from 'fs';
 import { parseWebhookEvent, verifyAppKeyWithNeynar } from "@farcaster/frame-node";
+import ReferralRewardsArtifact from './path/to/ReferralReward.json'; // adjust path as needed
 
 // Initialize Express app
 const app = express();
@@ -1258,3 +1259,28 @@ await sendNotification(
   'Your friend just made a new trade!', // body
   'https://yourapp.com/predictions' // targetUrl
 );
+
+const CONTRACT_ADDRESS = '0x869E4D52609097de6F1eefbB5b9F1f152fBecD51'; // your deployed contract
+const PRIVATE_KEY = process.env.OWNER_PRIVATE_KEY; // set in your .env
+const RPC_URL = process.env.RPC_URL; // set in your .env
+
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+const ownerWallet = new ethers.Wallet(PRIVATE_KEY, provider);
+const contract = new ethers.Contract(CONTRACT_ADDRESS, ReferralRewardsArtifact.abi, ownerWallet);
+
+// Endpoint to reward a referral on-chain
+app.post('/api/reward-referral', express.json(), async (req, res) => {
+  const { referrer, referred } = req.body;
+  if (!referrer || !referred) {
+    return res.status(400).json({ error: 'Missing referrer or referred address' });
+  }
+  try {
+    // Call the contract to credit the reward
+    const tx = await contract.rewardReferral(referrer, referred);
+    await tx.wait();
+    res.json({ success: true, txHash: tx.hash });
+  } catch (err) {
+    console.error('Error rewarding referral:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
