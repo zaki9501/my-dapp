@@ -1116,6 +1116,33 @@ app.post('/api/test-referral', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
+// Optional: Set a secret in your .env, e.g. REWARD_API_SECRET=your_secret
+const REWARD_API_SECRET = process.env.REWARD_API_SECRET;
+
+app.post('/api/reward-referral', express.json(), async (req, res) => {
+  console.log("Received POST /api/reward-referral", req.body);
+
+  // Optional: Simple security check
+  if (REWARD_API_SECRET && req.headers['x-api-secret'] !== REWARD_API_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { referrer, referred } = req.body;
+  if (!referrer || !referred) {
+    return res.status(400).json({ error: 'Missing referrer or referred address' });
+  }
+  try {
+    // Call the contract to credit the reward
+    const tx = await contract.rewardReferral(referrer, referred);
+    await tx.wait();
+    console.log(`Rewarded referral: referrer=${referrer}, referred=${referred}, txHash=${tx.hash}`);
+    res.json({ success: true, txHash: tx.hash });
+  } catch (err) {
+    console.error('Error rewarding referral:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Start the server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
